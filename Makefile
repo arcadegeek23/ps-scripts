@@ -12,11 +12,16 @@ SYNC := ~/me/refs/bin/sync-agent-config.sh
 
 help:
 	@echo "Targets:"
-	@echo "  make sync         Sync agent config from ~/me/refs/ into this repo"
-	@echo "  make sync-check   Verify nothing has drifted since last sync"
-	@echo "  make sync-restore Force-regenerate agent config (recovery)"
-	@echo "  make sync-dry-run Show what sync would change, no writes"
-	@echo "  make lint         Parse-check all PowerShell scripts"
+	@echo "  make sync                Sync agent config from ~/me/refs/ into this repo"
+	@echo "  make sync-check          Verify nothing has drifted since last sync"
+	@echo "  make sync-restore        Force-regenerate agent config (recovery)"
+	@echo "  make sync-dry-run        Show what sync would change, no writes"
+	@echo "  make lint                Parse-check all PowerShell scripts"
+	@echo ""
+	@echo "  make pia-list            List available PIA repositories"
+	@echo "  make pia-push-dry NAME=X Dry-run push of package X to PIA sandbox"
+	@echo "  make pia-push NAME=X     Push package X to PIA sandbox"
+
 
 sync:
 	@$(SYNC)
@@ -34,3 +39,17 @@ lint:
 	@find . -name '*.ps1' -not -path './archived/*' -print0 | xargs -0 -I {} \
 		bash -c 'powershell -NoProfile -Command "try { [System.Management.Automation.Language.Parser]::ParseFile(\"{}\", [ref]\$null, [ref]\$null); Write-Host \"OK   {}\" } catch { Write-Host \"FAIL {}\"; exit 1 }"' 2>/dev/null \
 		|| echo "(powershell not on PATH; skipped)"
+
+# PIA deploy — push a package folder to the CIT PIA.ai sandbox.
+# Source of truth is this repo; PIA is the deployment target.
+# See ~/me/tools/pia_push_script.py for the full tool.
+PIA_PUSH := python3 ~/me/tools/pia_push_script.py
+
+pia-list:
+	@$(PIA_PUSH) --list-repos
+
+pia-push-dry:
+	@$(PIA_PUSH) --package $(NAME) --dry-run
+
+pia-push:
+	@$(PIA_PUSH) --package $(NAME)
