@@ -32,3 +32,8 @@ secrets/
 # Build/test outputs
 output/
 dist/
+
+# Derived agent config (regenerated from ~/me/refs/cline/workspace-template/
+# by ~/me/refs/bin/sync-agent-config.sh). NEVER commit this — it's
+# regenerable and would be a different hash than the source on every sync.
+.clinerules/
