@@ -1,15 +1,29 @@
 # Remediate-SecureBootCert.ps1
-# Triggers Windows Update to scan, download, and install the cumulative update
-# that carries the Secure Boot DBX certificate refresh.
+# Sets the AvailableUpdates registry bitmask to trigger the Windows Secure
+# Boot certificate servicing task, which applies the 2023 UEFI CA certificates.
 # Author:  Kyle Etter
 # Created: 2026-06-19
+# Updated: 2026-06-20 - Set AvailableUpdates=0x5944 instead of just triggering WU
 # Tested:  Windows 10 22H2, Windows 11 23H2, Windows 11 24H2
 # Intune:  Proactive Remediation - Remediation
-# Notes:   Blast radius: clears the WU download cache and re-triggers scan/download/install.
-#          The actual KB install may complete after a reboot - that is expected.
-#          This script does NOT force a reboot. Windows Update will prompt natively.
-#          Idempotent: re-checks the detect condition before acting. If the KB is
-#          already installed, exits 0 without doing anything.
+# Notes:   The Windows servicing task runs ~every 12 hours and checks the
+#          AvailableUpdates bitmask under
+#          HKLM\SYSTEM\CurrentControlSet\Control\SecureBoot\Servicing.
+#          Setting it to 0x5944 requests the full sequence:
+#            - Add 2023 DB entries (UEFI CA 2023 + Option ROM UEFI CA 2023)
+#            - Update KEK
+#            - Update boot manager to the 2023-signed version
+#          The task applies changes across multiple reboots. Do NOT expect
+#          immediate completion - allow 24-48 hours for the full sequence.
+#
+#          This script does NOT force a reboot. The servicing task handles
+#          reboots natively via the scheduled task.
+#
+#          Idempotent: if UEFICA2023Status is already "Updated", exits 0.
+#
+# Blast radius: Sets one registry DWORD under HKLM\SYSTEM\CurrentControlSet.
+#              Does not clear WU cache, stop services, or force reboots.
+#              The Windows scheduled task does the actual firmware writes.
 
 [CmdletBinding()]
 param()
@@ -19,100 +33,55 @@ $WarningPreference     = 'Continue'
 
 . "$PSScriptRoot\..\..\platform\CIT-Logging.ps1" -ScriptName 'Remediate-SecureBootCert'
 
-# ---------------------------------------------------------------------------
-# KB mapping: must match Detect-SecureBootCert.ps1
-# ---------------------------------------------------------------------------
-$SecureBootKbMap = @{
-    '19045' = 'KB5063610'
-    '22631' = 'KB5063917'
-    '26100' = 'KB5063915'
-    '26200' = 'KB5063915'
-}
+# Registry path for Secure Boot certificate servicing.
+$SecureBootServicingKey = 'HKLM:\SYSTEM\CurrentControlSet\Control\SecureBoot\Servicing'
 
-function Get-CitOsBuildNumber {
+# Bitmask to request the full certificate update sequence.
+# 0x5944 = add DB entries + KEK update + boot manager update.
+# This is the value Microsoft documents in the Secure Boot playbook.
+$AvailableUpdatesBitmask = 0x5944
+
+function Test-CitSecureBootEnabled {
     try {
-        $os = Get-WmiObject -Class Win32_OperatingSystem -ErrorAction Stop
-        $version = $os.Version
-        $parts = $version -split '\.'
-        return $parts[2]
+        return Confirm-SecureBootUEFI -ErrorAction Stop
     } catch {
-        Write-CITLog -Message "Unable to determine OS build: $($_.Exception.Message)" -Level WARN -ScriptName 'Remediate-SecureBootCert'
         return $null
     }
 }
 
-function Test-CitKbInstalled {
-    param([string]$KbNumber)
+function Get-CitSecureBootRegValue {
+    param([string]$Name)
 
     try {
-        $hotfix = Get-HotFix -Id $KbNumber -ErrorAction SilentlyContinue
-        if ($hotfix) {
-            return $true
+        if (-not (Test-Path $SecureBootServicingKey)) {
+            return $null
         }
-        $wmiQuery = "SELECT * FROM Win32_QuickFixEngineering WHERE HotFixID = '$KbNumber'"
-        $wmiResult = Get-WmiObject -Query $wmiQuery -ErrorAction SilentlyContinue
-        if ($wmiResult) {
-            return $true
+        $item = Get-ItemProperty -Path $SecureBootServicingKey -Name $Name -ErrorAction SilentlyContinue
+        if ($item -and $item.$Name -ne $null) {
+            return $item.$Name
         }
-        return $false
+        return $null
     } catch {
-        return $false
+        return $null
     }
 }
 
-function Stop-CitWuauserv {
-    try {
-        if ((Get-Service -Name 'wuauserv' -ErrorAction SilentlyContinue).Status -eq 'Running') {
-            Stop-Service -Name 'wuauserv' -Force -ErrorAction Stop
-            Write-CITLog -Message 'Stopped wuauserv' -Level INFO -ScriptName 'Remediate-SecureBootCert'
-        }
-        return $true
-    } catch {
-        Write-CITLog -Message "Failed to stop wuauserv: $($_.Exception.Message)" -Level WARN -ScriptName 'Remediate-SecureBootCert'
-        return $false
-    }
-}
-
-function Remove-CitWUDownloadCache {
-    try {
-        $downloadPath = 'C:\Windows\SoftwareDistribution\Download'
-        if (Test-Path $downloadPath) {
-            Get-ChildItem $downloadPath -Recurse -ErrorAction SilentlyContinue |
-                Remove-Item -Recurse -Force -ErrorAction SilentlyContinue
-            Write-CITLog -Message 'Cleared WU download cache' -Level INFO -ScriptName 'Remediate-SecureBootCert'
-        }
-        return $true
-    } catch {
-        Write-CITLog -Message "Failed to clear WU download cache: $($_.Exception.Message)" -Level WARN -ScriptName 'Remediate-SecureBootCert'
-        return $false
-    }
-}
-
-function Start-CitWuauserv {
-    try {
-        if ((Get-Service -Name 'wuauserv' -ErrorAction SilentlyContinue).Status -ne 'Running') {
-            Start-Service -Name 'wuauserv' -ErrorAction Stop
-            Write-CITLog -Message 'Started wuauserv' -Level INFO -ScriptName 'Remediate-SecureBootCert'
-        }
-        return $true
-    } catch {
-        Write-CITLog -Message "Failed to start wuauserv: $($_.Exception.Message)" -Level WARN -ScriptName 'Remediate-SecureBootCert'
-        return $false
-    }
-}
-
-function Invoke-CitUsoClientAction {
-    param([string]$Action)
+function Set-CitSecureBootRegValue {
+    param(
+        [string]$Name,
+        $Value
+    )
 
     try {
-        $usoClient = Join-Path $env:windir 'System32\UsoClient.exe'
-        if (Test-Path $usoClient) {
-            Start-Process -FilePath $usoClient -ArgumentList $Action -Wait -WindowStyle Hidden -ErrorAction Stop
-            Write-CITLog -Message "Triggered UsoClient $Action" -Level INFO -ScriptName 'Remediate-SecureBootCert'
+        if (-not (Test-Path $SecureBootServicingKey)) {
+            New-Item -Path $SecureBootServicingKey -Force | Out-Null
+            Write-CITLog -Message "Created SecureBoot\Servicing registry key" -Level INFO -ScriptName 'Remediate-SecureBootCert'
         }
+        Set-ItemProperty -Path $SecureBootServicingKey -Name $Name -Value $Value -Type DWord -ErrorAction Stop
+        Write-CITLog -Message "Set $Name = 0x$($Value.ToString('X'))" -Level INFO -ScriptName 'Remediate-SecureBootCert'
         return $true
     } catch {
-        Write-CITLog -Message "UsoClient $Action failed: $($_.Exception.Message)" -Level WARN -ScriptName 'Remediate-SecureBootCert'
+        Write-CITLog -Message "Failed to set $Name : $($_.Exception.Message)" -Level ERROR -ScriptName 'Remediate-SecureBootCert'
         return $false
     }
 }
@@ -120,56 +89,67 @@ function Invoke-CitUsoClientAction {
 try {
     Write-CITLog -Message 'Starting Secure Boot certificate remediation' -Level INFO -ScriptName 'Remediate-SecureBootCert'
 
-    # 1. Idempotency check: re-verify the device actually needs the update.
-    $buildNumber = Get-CitOsBuildNumber
-    if (-not $buildNumber) {
-        Write-CITLog -Message 'Could not determine OS build number - exiting with error' -Level ERROR -ScriptName 'Remediate-SecureBootCert'
-        exit 2
-    }
-
-    $expectedKb = $SecureBootKbMap[$buildNumber]
-    if (-not $expectedKb) {
-        Write-CITLog -Message "No KB mapping for build $buildNumber - nothing to remediate" -Level INFO -ScriptName 'Remediate-SecureBootCert'
-        Write-Output "Build=$buildNumber;Status=NoAction;Reason=NoKbMapping"
+    # 1. Idempotency check: if UEFICA2023Status is already Updated, exit.
+    $status = Get-CitSecureBootRegValue -Name 'UEFICA2023Status'
+    if ($status -eq 'Updated') {
+        Write-CITLog -Message 'UEFICA2023Status=Updated - already compliant, no action needed (idempotent)' -Level INFO -ScriptName 'Remediate-SecureBootCert'
+        Write-Output 'UEFICA2023Status=Updated;Status=AlreadyCompliant'
         exit 0
     }
 
-    $alreadyInstalled = Test-CitKbInstalled -KbNumber $expectedKb
-    if ($alreadyInstalled) {
-        Write-CITLog -Message "KB $expectedKb already installed - no action needed (idempotent)" -Level INFO -ScriptName 'Remediate-SecureBootCert'
-        Write-Output "Build=$buildNumber;Kb=$expectedKb;Status=AlreadyInstalled"
+    # Check for prior error state - if firmware rejected the write,
+    # setting the bitmask again will not help. Surface it.
+    $errorCode = Get-CitSecureBootRegValue -Name 'UEFICA2023Error'
+    if ($errorCode -and $errorCode -ne 0) {
+        Write-CITLog -Message "UEFICA2023Error=$errorCode - prior servicing failure, bitmask reset may help but firmware update may be needed" -Level WARN -ScriptName 'Remediate-SecureBootCert'
+        # Continue anyway - a retry may succeed if the error was transient
+    }
+
+    # 2. Check if AvailableUpdates is already set to the right value.
+    $currentAvailableUpdates = Get-CitSecureBootRegValue -Name 'AvailableUpdates'
+    if ($currentAvailableUpdates -eq $AvailableUpdatesBitmask) {
+        Write-CITLog -Message "AvailableUpdates already set to 0x$($AvailableUpdatesBitmask.ToString('X')) - waiting for servicing task to complete" -Level INFO -ScriptName 'Remediate-SecureBootCert'
+        Write-Output "AvailableUpdates=0x$($AvailableUpdatesBitmask.ToString('X'));Status=AlreadySet;UEFICA2023Status=$status"
         exit 0
     }
 
-    Write-CITLog -Message "KB $expectedKb not installed on build $buildNumber - proceeding with remediation" -Level INFO -ScriptName 'Remediate-SecureBootCert'
-
-    # 2. Reset WU download cache and trigger scan/download/install.
-    $stopped = Stop-CitWuauserv
-    $cache   = Remove-CitWUDownloadCache
-    $started = Start-CitWuauserv
-
-    if (-not $started) {
-        Write-CITLog -Message 'wuauserv could not be restarted - cannot proceed' -Level ERROR -ScriptName 'Remediate-SecureBootCert'
+    # 3. Set the AvailableUpdates bitmask. This tells the Windows scheduled
+    #    task (runs ~every 12 hours) to perform the full cert update sequence.
+    $setOk = Set-CitSecureBootRegValue -Name 'AvailableUpdates' -Value $AvailableUpdatesBitmask
+    if (-not $setOk) {
+        Write-CITLog -Message 'Failed to set AvailableUpdates bitmask - cannot proceed' -Level ERROR -ScriptName 'Remediate-SecureBootCert'
         exit 2
     }
 
-    Invoke-CitUsoClientAction -Action 'StartScan'
-    Start-Sleep -Seconds 30
-    Invoke-CitUsoClientAction -Action 'StartDownload'
-    Invoke-CitUsoClientAction -Action 'StartInstall'
+    # 4. Optionally trigger the servicing task immediately rather than
+    #    waiting up to 12 hours for the next scheduled run.
+    #    The task name is "Secure Boot certificate update" under
+    #    \Microsoft\Windows\SecureBoot\CertificateUpdate (if it exists).
+    try {
+        $taskPath = '\Microsoft\Windows\SecureBoot\CertificateUpdate'
+        $task = Get-ScheduledTask -TaskPath $taskPath -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($task) {
+            Start-ScheduledTask -TaskPath $taskPath -TaskName $task.TaskName -ErrorAction SilentlyContinue
+            Write-CITLog -Message "Triggered scheduled task: $($task.TaskName)" -Level INFO -ScriptName 'Remediate-SecureBootCert'
+        } else {
+            Write-CITLog -Message 'SecureBoot servicing scheduled task not found - will run on next 12h cycle' -Level INFO -ScriptName 'Remediate-SecureBootCert'
+        }
+    } catch {
+        Write-CITLog -Message "Could not trigger scheduled task (non-fatal): $($_.Exception.Message)" -Level WARN -ScriptName 'Remediate-SecureBootCert'
+    }
 
-    Write-CITLog -Message "Remediation triggered for KB $expectedKb - install may complete after reboot" -Level INFO -ScriptName 'Remediate-SecureBootCert'
+    Write-CITLog -Message "Remediation triggered: AvailableUpdates=0x$($AvailableUpdatesBitmask.ToString('X')). Servicing task will apply certs over next 24-48h with reboots." -Level INFO -ScriptName 'Remediate-SecureBootCert'
 
     [PSCustomObject]@{
-        Status    = 'UPDATE_TRIGGERED'
-        Kb        = $expectedKb
-        Build     = $buildNumber
-        RebootMsg = 'A reboot may be required for the update to complete'
+        Status          = 'BITMASK_SET'
+        AvailableUpdates = "0x$($AvailableUpdatesBitmask.ToString('X'))"
+        UEFICA2023Status = $status
+        NextStep        = 'Servicing task runs within 12 hours. Expect reboots. Check UEFICA2023Status=Updated after 24-48h.'
     } | ConvertTo-Json -Compress | Write-Output
 
     Write-CITLog -Message 'Secure Boot certificate remediation complete' -Level INFO -ScriptName 'Remediate-SecureBootCert'
-
     exit 0
+
 } catch {
     Write-CITLog -Message "Remediation error: $($_.Exception.Message)" -Level ERROR -ScriptName 'Remediate-SecureBootCert'
     exit 2

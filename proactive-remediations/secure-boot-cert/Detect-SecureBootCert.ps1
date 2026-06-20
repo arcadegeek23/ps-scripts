@@ -1,15 +1,33 @@
 # Detect-SecureBootCert.ps1
-# Detects whether a device has the Secure Boot DBX certificate refresh applied.
+# Detects whether a device has completed the Secure Boot 2011-to-2023
+# certificate transition by reading the UEFICA2023Status registry value.
 # Author:  Kyle Etter
 # Created: 2026-06-19
+# Updated: 2026-06-20 - Replaced KB-only check with registry-status check
 # Tested:  Windows 10 22H2, Windows 11 23H2, Windows 11 24H2
 # Intune:  Proactive Remediation - Detection
-# Notes:   Microsoft announced a Secure Boot certificate expiration fix starting
-#          June 2026. The fix ships in the monthly cumulative update as a DBX
-#          revocation list refresh. This script checks whether the required KB
-#          is installed for the device's OS build. If Secure Boot is disabled,
-#          the device is considered compliant (the cert expiration does not apply).
+# Notes:   Microsoft announced a Secure Boot certificate expiration fix
+#          starting June 2026. The 2011 UEFI CA certificates expire mid-2026.
+#          Windows applies the 2023 replacements via a servicing task that
+#          runs ~every 12 hours when the AvailableUpdates registry bitmask
+#          is set. The KB alone does NOT apply the certs - the registry key
+#          is what triggers the OS-side servicing flow.
+#
+#          Compliance is determined by UEFICA2023Status = "Updated".
 #          Exit 0 = compliant, 1 = non-compliant (needs update), 2+ = error.
+#
+# Key registry paths (Microsoft official):
+#   HKLM\SYSTEM\CurrentControlSet\Control\SecureBoot\Servicing
+#     - AvailableUpdates    (DWORD)  bitmask; 0x5944 = full sequence
+#     - UEFICA2023Status     (string) NotStarted / InProgress / Updated
+#     - UEFICA2023Error      (DWORD)  non-zero = failure code
+#     - HighConfidenceOptOut (DWORD)  1 = block auto monthly deploy
+#     - MicrosoftUpdateManagedOptIn (DWORD) CFR opt-in
+#
+# Event log IDs (System log):
+#   1808 = success (certs applied + boot manager updated)
+#   1801 = failure during cert apply
+#   1795 = firmware rejected variable write (needs OEM firmware update)
 
 [CmdletBinding()]
 param()
@@ -19,69 +37,34 @@ $WarningPreference     = 'Continue'
 
 . "$PSScriptRoot\..\..\platform\CIT-Logging.ps1" -ScriptName 'Detect-SecureBootCert'
 
-# ---------------------------------------------------------------------------
-# KB mapping: OS build number -> KB that carries the Secure Boot DBX refresh.
-# Update this table when Microsoft releases new KBs for additional builds.
-# The build numbers below are the major-minor platform versions:
-#   19045 = Win10 22H2
-#   22631 = Win11 23H2
-#   26100 = Win11 24H2
-#   26200 = Win11 25H2
-# When you confirm the exact June 2026 KBs, update the values here.
-# ---------------------------------------------------------------------------
-$SecureBootKbMap = @{
-    '19045' = 'KB5063610'   # Win10 22H2 - June 2026 cumulative
-    '22631' = 'KB5063917'   # Win11 23H2 - June 2026 cumulative
-    '26100' = 'KB5063915'   # Win11 24H2 - June 2026 cumulative
-    '26200' = 'KB5063915'   # Win11 25H2 - same KB family as 24H2
-}
-
-function Get-CitOsBuildNumber {
-    try {
-        $os = Get-WmiObject -Class Win32_OperatingSystem -ErrorAction Stop
-        $version = $os.Version  # e.g. "10.0.19045"
-        $parts = $version -split '\.'
-        return $parts[2]
-    } catch {
-        Write-CITLog -Message "Unable to determine OS build: $($_.Exception.Message)" -Level WARN -ScriptName 'Detect-SecureBootCert'
-        return $null
-    }
-}
+# Registry path for Secure Boot certificate servicing status.
+$SecureBootServicingKey = 'HKLM:\SYSTEM\CurrentControlSet\Control\SecureBoot\Servicing'
 
 function Test-CitSecureBootEnabled {
     try {
-        # Confirm-SecureBootUEFI is available on Win8+ with UEFI.
-        # Returns $true if Secure Boot is on, $false if off or not supported.
         $result = Confirm-SecureBootUEFI -ErrorAction Stop
         return $result
     } catch {
-        # If the cmdlet is unavailable (legacy BIOS, or older PS), assume
-        # Secure Boot is not applicable and skip the check.
         Write-CITLog -Message "Cannot determine Secure Boot status: $($_.Exception.Message)" -Level WARN -ScriptName 'Detect-SecureBootCert'
         return $null
     }
 }
 
-function Test-CitKbInstalled {
-    param([string]$KbNumber)
+function Get-CitSecureBootRegValue {
+    param([string]$Name)
 
     try {
-        $hotfix = Get-HotFix -Id $KbNumber -ErrorAction SilentlyContinue
-        if ($hotfix) {
-            return $true
+        if (-not (Test-Path $SecureBootServicingKey)) {
+            return $null
         }
-
-        # Fallback: check via WMI (some environments don't surface all KBs via Get-HotFix)
-        $wmiQuery = "SELECT * FROM Win32_QuickFixEngineering WHERE HotFixID = '$KbNumber'"
-        $wmiResult = Get-WmiObject -Query $wmiQuery -ErrorAction SilentlyContinue
-        if ($wmiResult) {
-            return $true
+        $item = Get-ItemProperty -Path $SecureBootServicingKey -Name $Name -ErrorAction SilentlyContinue
+        if ($item -and $item.$Name -ne $null) {
+            return $item.$Name
         }
-
-        return $false
+        return $null
     } catch {
-        Write-CITLog -Message "Unable to check KB $KbNumber : $($_.Exception.Message)" -Level WARN -ScriptName 'Detect-SecureBootCert'
-        return $false
+        Write-CITLog -Message "Cannot read registry $Name : $($_.Exception.Message)" -Level WARN -ScriptName 'Detect-SecureBootCert'
+        return $null
     }
 }
 
@@ -96,38 +79,56 @@ try {
         exit 0
     }
     if ($secureBootOn -eq $null) {
-        Write-CITLog -Message 'Secure Boot status unknown - proceeding with KB check' -Level WARN -ScriptName 'Detect-SecureBootCert'
+        Write-CITLog -Message 'Secure Boot status unknown - proceeding with registry check' -Level WARN -ScriptName 'Detect-SecureBootCert'
     }
 
-    # 2. Get OS build number and find the expected KB.
-    $buildNumber = Get-CitOsBuildNumber
-    if (-not $buildNumber) {
-        Write-CITLog -Message 'Could not determine OS build number - exiting with error' -Level ERROR -ScriptName 'Detect-SecureBootCert'
-        exit 2
-    }
+    # 2. Read UEFICA2023Status from registry. This is the primary
+    #    compliance marker per Microsoft guidance.
+    $status = Get-CitSecureBootRegValue -Name 'UEFICA2023Status'
 
-    Write-CITLog -Message "OS build: $buildNumber" -Level INFO -ScriptName 'Detect-SecureBootCert'
-
-    $expectedKb = $SecureBootKbMap[$buildNumber]
-    if (-not $expectedKb) {
-        Write-CITLog -Message "No KB mapping for build $buildNumber - device is compliant (unknown build, no action defined)" -Level INFO -ScriptName 'Detect-SecureBootCert'
-        Write-Output "Build=$buildNumber;Compliant=1;Reason=NoKbMapping"
+    if ($status -eq 'Updated') {
+        Write-CITLog -Message 'UEFICA2023Status=Updated - device is compliant' -Level INFO -ScriptName 'Detect-SecureBootCert'
+        Write-Output 'UEFICA2023Status=Updated;Compliant=1'
         exit 0
     }
 
-    Write-CITLog -Message "Expected KB for build $buildNumber : $expectedKb" -Level INFO -ScriptName 'Detect-SecureBootCert'
-
-    # 3. Check if the KB is installed.
-    $kbInstalled = Test-CitKbInstalled -KbNumber $expectedKb
-    if ($kbInstalled) {
-        Write-CITLog -Message "KB $expectedKb is installed - device is compliant" -Level INFO -ScriptName 'Detect-SecureBootCert'
-        Write-Output "Build=$buildNumber;Kb=$expectedKb;Compliant=1"
-        exit 0
-    } else {
-        Write-CITLog -Message "KB $expectedKb is NOT installed - device is non-compliant" -Level WARN -ScriptName 'Detect-SecureBootCert'
-        Write-Output "Build=$buildNumber;Kb=$expectedKb;Compliant=0"
+    if ($status -eq 'InProgress') {
+        Write-CITLog -Message 'UEFICA2023Status=InProgress - servicing task is running, not yet complete' -Level INFO -ScriptName 'Detect-SecureBootCert'
+        Write-Output 'UEFICA2023Status=InProgress;Compliant=0'
         exit 1
     }
+
+    if ($status -eq 'NotStarted') {
+        Write-CITLog -Message 'UEFICA2023Status=NotStarted - device needs remediation (set AvailableUpdates bitmask)' -Level WARN -ScriptName 'Detect-SecureBootCert'
+        Write-Output 'UEFICA2023Status=NotStarted;Compliant=0'
+        exit 1
+    }
+
+    # Status is null or unexpected value. Check if AvailableUpdates has been
+    # set already - if so, the task may not have run yet (give it time).
+    # If AvailableUpdates is not set, device needs remediation.
+    $availableUpdates = Get-CitSecureBootRegValue -Name 'AvailableUpdates'
+    $errorCode = Get-CitSecureBootRegValue -Name 'UEFICA2023Error'
+
+    if ($errorCode -and $errorCode -ne 0) {
+        Write-CITLog -Message "UEFICA2023Error=$errorCode - servicing failed, may need firmware update or OEM support" -Level ERROR -ScriptName 'Detect-SecureBootCert'
+        Write-Output "UEFICA2023Error=$errorCode;Compliant=0;Reason=ServicingFailed"
+        exit 1
+    }
+
+    if ($availableUpdates -and $availableUpdates -ne 0) {
+        # AvailableUpdates is set but status is not yet Updated.
+        # The servicing task runs ~every 12 hours. Give it time.
+        Write-CITLog -Message "AvailableUpdates=0x$($availableUpdates.ToString('X')) but UEFICA2023Status is null/unknown - waiting for servicing task" -Level INFO -ScriptName 'Detect-SecureBootCert'
+        Write-Output "AvailableUpdates=0x$($availableUpdates.ToString('X'));Compliant=0;Reason=PendingServicingTask"
+        exit 1
+    }
+
+    # No status, no AvailableUpdates set - device needs remediation.
+    Write-CITLog -Message 'No UEFICA2023Status and AvailableUpdates not set - device needs remediation' -Level WARN -ScriptName 'Detect-SecureBootCert'
+    Write-Output 'UEFICA2023Status=NotSet;Compliant=0;Reason=NeedsAvailableUpdates'
+    exit 1
+
 } catch {
     Write-CITLog -Message "Detection error: $($_.Exception.Message)" -Level ERROR -ScriptName 'Detect-SecureBootCert'
     exit 2
