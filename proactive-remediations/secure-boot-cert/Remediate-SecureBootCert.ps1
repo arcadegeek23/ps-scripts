@@ -3,6 +3,7 @@
 # Boot certificate servicing task, which applies the 2023 UEFI CA certificates.
 # Author:  Kyle Etter
 # Created: 2026-06-19
+# Version: 2.0 - 2026-06-22 - Inlined Write-CITLog (fixes IME cache dot-source failure)
 # Updated: 2026-06-20 - Set AvailableUpdates=0x5944 instead of just triggering WU
 # Tested:  Windows 10 22H2, Windows 11 23H2, Windows 11 24H2
 # Intune:  Proactive Remediation - Remediation

@@ -15,6 +15,7 @@
 #
 # Author:  Kyle Etter / Zeus
 # Created: 2026-06-21
+# Version: 2.0 - 2026-06-22 - Inlined Write-CITLog (fixes IME cache dot-source failure)
 # Intune:  Proactive Remediation - Detection
 # Exit 0 = compliant, 1 = non-compliant (needs re-seal), 2+ = error
 

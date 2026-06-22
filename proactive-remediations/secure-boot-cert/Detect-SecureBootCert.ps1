@@ -3,6 +3,7 @@
 # certificate transition by reading the UEFICA2023Status registry value.
 # Author:  Kyle Etter
 # Created: 2026-06-19
+# Version: 2.0 - 2026-06-22 - Inlined Write-CITLog (fixes IME cache dot-source failure)
 # Updated: 2026-06-20 - Replaced KB-only check with registry-status check
 # Tested:  Windows 10 22H2, Windows 11 23H2, Windows 11 24H2
 # Intune:  Proactive Remediation - Detection
