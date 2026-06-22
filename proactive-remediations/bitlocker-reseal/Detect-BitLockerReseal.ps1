@@ -24,7 +24,22 @@ param()
 $ErrorActionPreference = 'Stop'
 $WarningPreference     = 'Continue'
 
-. "$PSScriptRoot\..\..\platform\CIT-Logging.ps1" -ScriptName 'Detect-BitLockerReseal'
+# Inline logging function (avoids external dot-source that fails in IME cache)
+function Write-CITLog {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)] [string] $Message,
+        [Parameter()] [ValidateSet('INFO','WARN','ERROR','DEBUG')] [string] $Level = 'INFO',
+        [Parameter(Mandatory)] [string] $ScriptName
+    )
+    $logDir = 'C:\ProgramData\CIT\Logs'
+    if (-not (Test-Path $logDir)) {
+        try { New-Item -Path $logDir -ItemType Directory -Force | Out-Null } catch { return }
+    }
+    $ts   = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss.fff')
+    $line = "$ts [$Level] [$ScriptName] $Message"
+    Add-Content -Path (Join-Path $logDir "$ScriptName.log") -Value $line -Encoding UTF8
+}
 
 # Registry paths
 $SecureBootServicingKey = 'HKLM:\SYSTEM\CurrentControlSet\Control\SecureBoot\Servicing'
