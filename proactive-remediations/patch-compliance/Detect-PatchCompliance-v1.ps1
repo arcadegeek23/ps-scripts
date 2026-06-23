@@ -6,6 +6,7 @@
 #
 # Author:  Kyle Etter / Zeus
 # Created: 2026-06-20
+# Version: 1.1 - 2026-06-23 - Inline Write-CITLog (fixes IME cache dot-source failure), add $ProgressPreference
 # Tested:  Windows 10 22H2, Windows 11 22H2-25H2
 # Intune:  Proactive Remediation - Detection
 #
@@ -27,8 +28,24 @@ param()
 
 $ErrorActionPreference = 'Stop'
 $WarningPreference     = 'Continue'
+$ProgressPreference    = 'SilentlyContinue'
 
-. "$PSScriptRoot\..\..\platform\CIT-Logging.ps1" -ScriptName 'Detect-PatchCompliance'
+# Inline logging function (avoids external dot-source that fails in IME cache)
+function Write-CITLog {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)] [string] $Message,
+        [Parameter()] [ValidateSet('INFO','WARN','ERROR','DEBUG')] [string] $Level = 'INFO',
+        [Parameter(Mandatory)] [string] $ScriptName
+    )
+    $logDir = 'C:\ProgramData\CIT\Logs'
+    if (-not (Test-Path $logDir)) {
+        try { New-Item -Path $logDir -ItemType Directory -Force | Out-Null } catch { return }
+    }
+    $ts   = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss.fff')
+    $line = "$ts [$Level] [$ScriptName] $Message"
+    Add-Content -Path (Join-Path $logDir "$ScriptName.log") -Value $line -Encoding UTF8
+}
 
 # ---------------------------------------------------------------------------
 # Configuration

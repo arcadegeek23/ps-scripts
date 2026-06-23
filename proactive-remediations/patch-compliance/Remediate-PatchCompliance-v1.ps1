@@ -5,6 +5,7 @@
 #
 # Author:  Kyle Etter / Zeus
 # Created: 2026-06-20
+# Version: 1.1 - 2026-06-23 - Fix PS 5.1 compat (ConvertTo-Json -Compress), inline Write-CITLog, add $ProgressPreference
 # Tested:  Windows 10 22H2, Windows 11 22H2-25H2
 # Intune:  Proactive Remediation - Remediation
 #
@@ -26,8 +27,24 @@ param()
 
 $ErrorActionPreference = 'Stop'
 $WarningPreference     = 'Continue'
+$ProgressPreference    = 'SilentlyContinue'
 
-. "$PSScriptRoot\..\..\platform\CIT-Logging.ps1" -ScriptName 'Remediate-PatchCompliance'
+# Inline logging function (avoids external dot-source that fails in IME cache)
+function Write-CITLog {
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)] [string] $Message,
+        [Parameter()] [ValidateSet('INFO','WARN','ERROR','DEBUG')] [string] $Level = 'INFO',
+        [Parameter(Mandatory)] [string] $ScriptName
+    )
+    $logDir = 'C:\ProgramData\CIT\Logs'
+    if (-not (Test-Path $logDir)) {
+        try { New-Item -Path $logDir -ItemType Directory -Force | Out-Null } catch { return }
+    }
+    $ts   = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss.fff')
+    $line = "$ts [$Level] [$ScriptName] $Message"
+    Add-Content -Path (Join-Path $logDir "$ScriptName.log") -Value $line -Encoding UTF8
+}
 
 # ---------------------------------------------------------------------------
 # Configuration (must match Detect-PatchCompliance.ps1)
@@ -281,13 +298,7 @@ try {
     $actionStr = $actions -join ','
     Write-CITLog -Message "Remediation complete: $actionStr" -Level INFO -ScriptName 'Remediate-PatchCompliance'
 
-    [PSCustomObject]@{
-        Status           = 'REMEDIATION_TRIGGERED'
-        Build            = $buildNumber
-        DaysSinceUpdate  = $daysSinceUpdate
-        Actions          = $actionStr
-        RebootMsg        = 'A reboot may be required for updates to complete'
-    } | ConvertTo-Json -Compress | Write-Output
+    Write-Output "Status=REMEDIATION_TRIGGERED;Build=$buildNumber;DaysSinceUpdate=$daysSinceUpdate;Actions=$actionStr;RebootMsg=A reboot may be required for updates to complete"
 
     exit 0
 

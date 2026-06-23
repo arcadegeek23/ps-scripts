@@ -8,6 +8,7 @@
 #
 # Author:  Kyle Etter / Zeus
 # Created: 2026-06-21
+# Version: 2.1 - 2026-06-23 - Fix PS 5.1 compat (ConvertTo-Json -Compress not available), add $ProgressPreference
 # Version: 2.0 - 2026-06-22 - Inlined Write-CITLog (fixes IME cache dot-source failure)
 # Intune:  Proactive Remediation - Remediation
 #
@@ -28,6 +29,7 @@ param()
 
 $ErrorActionPreference = 'Stop'
 $WarningPreference     = 'Continue'
+$ProgressPreference    = 'SilentlyContinue'
 
 # Inline logging function (avoids external dot-source that fails in IME cache)
 function Write-CITLog {
@@ -136,13 +138,8 @@ try {
 
     Write-CITLog -Message 'BitLocker re-seal remediation complete - user should reboot to finalize' -Level INFO -ScriptName 'Remediate-BitLockerReseal'
 
-    [PSCustomObject]@{
-        Status   = 'SUSPENDED_FOR_REBOOT'
-        MountPoint = 'C:'
-        RebootCount = 1
-        NextStep = 'User must reboot once. BitLocker auto-resumes and re-seals to current boot measurements.'
-        Sentinel = if ($sentinelOk) { 'Written' } else { 'Failed' }
-    } | ConvertTo-Json -Compress | Write-Output
+    $sentinelStr = if ($sentinelOk) { 'Written' } else { 'Failed' }
+    Write-Output "Status=SUSPENDED_FOR_REBOOT;MountPoint=C:;RebootCount=1;Sentinel=$sentinelStr;NextStep=UserMustRebootOnce"
 
     exit 0
 
