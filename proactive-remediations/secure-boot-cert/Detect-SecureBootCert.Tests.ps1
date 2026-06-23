@@ -1,8 +1,9 @@
 # Detect-SecureBootCert.Tests.ps1
-# Pester 5+ tests for Detect-SecureBootCert.ps1
+# Pester 5+ tests for Detect-SecureBootCert-v2.ps1
+# Updated 2026-06-23 - Rewritten for v2 registry-status detection model
 
 BeforeAll {
-    $scriptPath = Join-Path $PSScriptRoot 'Detect-SecureBootCert.ps1'
+    $scriptPath = Join-Path $PSScriptRoot 'Detect-SecureBootCert-v2.ps1'
     $scriptName = 'Detect-SecureBootCert'
 }
 
@@ -11,54 +12,103 @@ function Test-PlatformIsWindows {
            ($PSVersionTable.PSEdition -eq 'Core' -and $PSVersionTable.Platform -eq 'Win32NT')
 }
 
-Describe 'Detect-SecureBootCert' {
-    It 'parses without syntax errors' {
-        $errors = $null
-        [System.Management.Automation.Language.Parser]::ParseFile($scriptPath, [ref]$null, [ref]$errors) | Out-Null
-        $errors | Should -BeNullOrEmpty
+Describe 'Detect-SecureBootCert-v2' {
+
+    Context 'Syntax and structure' {
+        It 'parses without syntax errors' {
+            $errors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile($scriptPath, [ref]$null, [ref]$errors) | Out-Null
+            $errors | Should -BeNullOrEmpty
+        }
+
+        It 'defines the expected v2 helper functions' {
+            $ast = [System.Management.Automation.Language.Parser]::ParseFile($scriptPath, [ref]$null, [ref]$null)
+            $functionNames = $ast.FindAll({ $args[0] -is [System.Management.Automation.Language.FunctionDefinitionAst] }, $false).Name
+            $functionNames | Should -Contain 'Write-CITLog'
+            $functionNames | Should -Contain 'Test-CitSecureBootEnabled'
+            $functionNames | Should -Contain 'Get-CitSecureBootRegValue'
+        }
+
+        It 'does NOT define v1 functions that were removed' {
+            $ast = [System.Management.Automation.Language.Parser]::ParseFile($scriptPath, [ref]$null, [ref]$null)
+            $functionNames = $ast.FindAll({ $args[0] -is [System.Management.Automation.Language.FunctionDefinitionAst] }, $false).Name
+            $functionNames | Should -Not -Contain 'Get-CitOsBuildNumber'
+            $functionNames | Should -Not -Contain 'Test-CitKbInstalled'
+        }
+
+        It 'inlines Write-CITLog (no external dot-sourcing)' {
+            $content = Get-Content $scriptPath -Raw
+            $content | Should -Not -Match '\.\.\\\\\.\.\\\\platform\\\\CIT-Logging\.ps1'
+            $content | Should -Match 'function Write-CITLog'
+        }
+
+        It 'references the SecureBoot Servicing registry key' {
+            $content = Get-Content $scriptPath -Raw
+            $content | Should -Match 'SecureBoot\\\\Servicing'
+            $content | Should -Match 'UEFICA2023Status'
+        }
+
+        It 'does NOT reference v1 patterns (KB map, UsoClient, wuauserv)' {
+            $content = Get-Content $scriptPath -Raw
+            $content | Should -Not -Match 'SecureBootKbMap'
+            $content | Should -Not -Match 'UsoClient'
+            $content | Should -Not -Match 'wuauserv'
+        }
     }
 
-    It 'defines the expected helper functions in the script body' {
-        $ast = [System.Management.Automation.Language.Parser]::ParseFile($scriptPath, [ref]$null, [ref]$null)
-        $functionNames = $ast.FindAll({ $args[0] -is [System.Management.Automation.Language.FunctionDefinitionAst] }, $false).Name
-        $functionNames | Should -Contain 'Get-CitOsBuildNumber'
-        $functionNames | Should -Contain 'Test-CitSecureBootEnabled'
-        $functionNames | Should -Contain 'Test-CitKbInstalled'
+    Context 'Exit code contract' {
+        It 'exits 0 when Secure Boot is disabled (content check)' {
+            $content = Get-Content $scriptPath -Raw
+            $content | Should -Match 'Secure Boot is disabled'
+            $content | Should -Match 'exit 0'
+        }
+
+        It 'exits 0 when UEFICA2023Status is Updated' {
+            $content = Get-Content $scriptPath -Raw
+            $content | Should -Match "UEFICA2023Status=Updated"
+            $content | Should -Match 'exit 0'
+        }
+
+        It 'exits 1 when UEFICA2023Status is InProgress or NotStarted' {
+            $content = Get-Content $scriptPath -Raw
+            $content | Should -Match 'InProgress'
+            $content | Should -Match 'NotStarted'
+            $content | Should -Match 'exit 1'
+        }
+
+        It 'exits 2 on error' {
+            $content = Get-Content $scriptPath -Raw
+            $content | Should -Match 'exit 2'
+        }
     }
 
-    It 'has the SecureBootKbMap hash table with at least 3 OS build entries' {
-        $content = Get-Content $scriptPath -Raw
-        $content | Should -Match "'19045'"
-        $content | Should -Match "'22631'"
-        $content | Should -Match "'26100'"
+    Context 'Side-effect safety' {
+        It 'has zero side effects (no Stop-Service, Remove-Item, Set-ItemProperty, Start-Process)' {
+            $content = Get-Content $scriptPath -Raw
+            $content | Should -Not -Match 'Stop-Service'
+            $content | Should -Not -Match 'Remove-Item'
+            $content | Should -Not -Match 'Set-ItemProperty'
+            $content | Should -Not -Match 'Start-Process'
+        }
+
+        It 'does not force a reboot' {
+            $content = Get-Content $scriptPath -Raw
+            $content | Should -Not -Match 'Restart-Computer'
+            $content | Should -Not -Match 'shutdown\.exe'
+        }
     }
 
-    It 'sources CIT-Logging.ps1 with the correct relative path' {
-        $content = Get-Content $scriptPath -Raw
-        $content | Should -Match '\.\.\\\\\.\.\\\\platform\\\\CIT-Logging\.ps1'
+    Context 'PowerShell 5.1 compatibility' {
+        It 'does not use PS 6+ only parameters' {
+            $content = Get-Content $scriptPath -Raw
+            $content | Should -Not -Match 'ConvertTo-Json.*-Compress'
+        }
     }
 
-    It 'exits 0 when Secure Boot is disabled' -Skip:(-not (Test-PlatformIsWindows)) {
-        # This test would need Confirm-SecureBootUEFI to be mocked.
-        # On a non-Windows host it is skipped. On Windows, we verify the
-        # detection logic is structured to exit 0 when Secure Boot is off
-        # by checking the script content for the early-exit pattern.
-        $content = Get-Content $scriptPath -Raw
-        $content | Should -Match 'Secure Boot is disabled'
-        $content | Should -Match 'exit 0'
-    }
-
-    It 'has zero side effects (no Stop-Service, Remove-Item, Set-Item in detect)' {
-        $content = Get-Content $scriptPath -Raw
-        # Detect must not mutate anything. These cmdlets would indicate side effects.
-        $content | Should -Not -Match 'Stop-Service'
-        $content | Should -Not -Match 'Remove-Item'
-        $content | Should -Not -Match 'Set-ItemProperty'
-        $content | Should -Not -Match 'Start-Process'
-    }
-
-    It 'writes to the CIT log when invoked on Windows' -Skip:(-not (Test-PlatformIsWindows)) {
-        & $scriptPath 2>$null | Out-Null
-        'C:\ProgramData\CIT\Logs\Detect-SecureBootCert.log' | Should -Exist
+    Context 'Runtime (Windows only)' {
+        It 'writes to the CIT log when invoked on Windows' -Skip:(-not (Test-PlatformIsWindows)) {
+            & $scriptPath 2>$null | Out-Null
+            'C:\ProgramData\CIT\Logs\Detect-SecureBootCert.log' | Should -Exist
+        }
     }
 }

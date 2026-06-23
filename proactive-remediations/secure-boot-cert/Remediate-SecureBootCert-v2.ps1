@@ -3,7 +3,7 @@
 # Boot certificate servicing task, which applies the 2023 UEFI CA certificates.
 # Author:  Kyle Etter
 # Created: 2026-06-19
-# Version: 2.0 - 2026-06-22 - Inlined Write-CITLog (fixes IME cache dot-source failure)
+# Version: 2.1 - 2026-06-23 - Fix PS 5.1 compat (ConvertTo-Json -Compress not available), add $ProgressPreference, remove dead function
 # Updated: 2026-06-20 - Set AvailableUpdates=0x5944 instead of just triggering WU
 # Tested:  Windows 10 22H2, Windows 11 23H2, Windows 11 24H2
 # Intune:  Proactive Remediation - Remediation
@@ -31,6 +31,7 @@ param()
 
 $ErrorActionPreference = 'Stop'
 $WarningPreference     = 'Continue'
+$ProgressPreference    = 'SilentlyContinue'
 
 # Inline logging function (avoids external dot-source that fails in IME cache)
 function Write-CITLog {
@@ -56,14 +57,6 @@ $SecureBootServicingKey = 'HKLM:\SYSTEM\CurrentControlSet\Control\SecureBoot\Ser
 # 0x5944 = add DB entries + KEK update + boot manager update.
 # This is the value Microsoft documents in the Secure Boot playbook.
 $AvailableUpdatesBitmask = 0x5944
-
-function Test-CitSecureBootEnabled {
-    try {
-        return Confirm-SecureBootUEFI -ErrorAction Stop
-    } catch {
-        return $null
-    }
-}
 
 function Get-CitSecureBootRegValue {
     param([string]$Name)
@@ -156,12 +149,7 @@ try {
 
     Write-CITLog -Message "Remediation triggered: AvailableUpdates=0x$($AvailableUpdatesBitmask.ToString('X')). Servicing task will apply certs over next 24-48h with reboots." -Level INFO -ScriptName 'Remediate-SecureBootCert'
 
-    [PSCustomObject]@{
-        Status          = 'BITMASK_SET'
-        AvailableUpdates = "0x$($AvailableUpdatesBitmask.ToString('X'))"
-        UEFICA2023Status = $status
-        NextStep        = 'Servicing task runs within 12 hours. Expect reboots. Check UEFICA2023Status=Updated after 24-48h.'
-    } | ConvertTo-Json -Compress | Write-Output
+    Write-Output "Status=BITMASK_SET;AvailableUpdates=0x$($AvailableUpdatesBitmask.ToString('X'));UEFICA2023Status=$status;NextStep=ServicingTaskWithin12h"
 
     Write-CITLog -Message 'Secure Boot certificate remediation complete' -Level INFO -ScriptName 'Remediate-SecureBootCert'
     exit 0
