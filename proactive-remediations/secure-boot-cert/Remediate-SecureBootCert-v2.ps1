@@ -3,13 +3,14 @@
 # Boot certificate servicing task, which applies the 2023 UEFI CA certificates.
 # Author:  Kyle Etter
 # Created: 2026-06-19
+# Version: 2.2 - 2026-06-23 - Fix AvailableUpdates registry path (must be under SecureBoot parent, not Servicing subkey) + fix scheduled task path
 # Version: 2.1 - 2026-06-23 - Fix PS 5.1 compat (ConvertTo-Json -Compress not available), add $ProgressPreference, remove dead function
 # Updated: 2026-06-20 - Set AvailableUpdates=0x5944 instead of just triggering WU
 # Tested:  Windows 10 22H2, Windows 11 23H2, Windows 11 24H2
 # Intune:  Proactive Remediation - Remediation
 # Notes:   The Windows servicing task runs ~every 12 hours and checks the
 #          AvailableUpdates bitmask under
-#          HKLM\SYSTEM\CurrentControlSet\Control\SecureBoot\Servicing.
+#          HKLM\SYSTEM\CurrentControlSet\Control\SecureBoot.
 #          Setting it to 0x5944 requests the full sequence:
 #            - Add 2023 DB entries (UEFI CA 2023 + Option ROM UEFI CA 2023)
 #            - Update KEK
@@ -50,7 +51,11 @@ function Write-CITLog {
     Add-Content -Path (Join-Path $logDir "$ScriptName.log") -Value $line -Encoding UTF8
 }
 
-# Registry path for Secure Boot certificate servicing.
+# Registry paths per Microsoft documentation:
+#   AvailableUpdates  -> HKLM:\SYSTEM\CurrentControlSet\Control\SecureBoot (parent key)
+#   UEFICA2023Status  -> HKLM:\SYSTEM\CurrentControlSet\Control\SecureBoot\Servicing (subkey)
+#   UEFICA2023Error   -> HKLM:\SYSTEM\CurrentControlSet\Control\SecureBoot\Servicing (subkey)
+$SecureBootKey = 'HKLM:\SYSTEM\CurrentControlSet\Control\SecureBoot'
 $SecureBootServicingKey = 'HKLM:\SYSTEM\CurrentControlSet\Control\SecureBoot\Servicing'
 
 # Bitmask to request the full certificate update sequence.
@@ -59,13 +64,16 @@ $SecureBootServicingKey = 'HKLM:\SYSTEM\CurrentControlSet\Control\SecureBoot\Ser
 $AvailableUpdatesBitmask = 0x5944
 
 function Get-CitSecureBootRegValue {
-    param([string]$Name)
+    param(
+        [string]$Name,
+        [string]$KeyPath = $SecureBootServicingKey
+    )
 
     try {
-        if (-not (Test-Path $SecureBootServicingKey)) {
+        if (-not (Test-Path $KeyPath)) {
             return $null
         }
-        $item = Get-ItemProperty -Path $SecureBootServicingKey -Name $Name -ErrorAction SilentlyContinue
+        $item = Get-ItemProperty -Path $KeyPath -Name $Name -ErrorAction SilentlyContinue
         if ($item -and $item.$Name -ne $null) {
             return $item.$Name
         }
@@ -78,19 +86,20 @@ function Get-CitSecureBootRegValue {
 function Set-CitSecureBootRegValue {
     param(
         [string]$Name,
-        $Value
+        $Value,
+        [string]$KeyPath = $SecureBootKey
     )
 
     try {
-        if (-not (Test-Path $SecureBootServicingKey)) {
-            New-Item -Path $SecureBootServicingKey -Force | Out-Null
-            Write-CITLog -Message "Created SecureBoot\Servicing registry key" -Level INFO -ScriptName 'Remediate-SecureBootCert'
+        if (-not (Test-Path $KeyPath)) {
+            New-Item -Path $KeyPath -Force | Out-Null
+            Write-CITLog -Message "Created registry key: $KeyPath" -Level INFO -ScriptName 'Remediate-SecureBootCert'
         }
-        Set-ItemProperty -Path $SecureBootServicingKey -Name $Name -Value $Value -Type DWord -ErrorAction Stop
-        Write-CITLog -Message "Set $Name = 0x$($Value.ToString('X'))" -Level INFO -ScriptName 'Remediate-SecureBootCert'
+        Set-ItemProperty -Path $KeyPath -Name $Name -Value $Value -Type DWord -ErrorAction Stop
+        Write-CITLog -Message "Set $Name = 0x$($Value.ToString('X')) at $KeyPath" -Level INFO -ScriptName 'Remediate-SecureBootCert'
         return $true
     } catch {
-        Write-CITLog -Message "Failed to set $Name : $($_.Exception.Message)" -Level ERROR -ScriptName 'Remediate-SecureBootCert'
+        Write-CITLog -Message "Failed to set $Name at $KeyPath : $($_.Exception.Message)" -Level ERROR -ScriptName 'Remediate-SecureBootCert'
         return $false
     }
 }
@@ -115,7 +124,8 @@ try {
     }
 
     # 2. Check if AvailableUpdates is already set to the right value.
-    $currentAvailableUpdates = Get-CitSecureBootRegValue -Name 'AvailableUpdates'
+    #    AvailableUpdates lives under the SecureBoot parent key (not Servicing subkey).
+    $currentAvailableUpdates = Get-CitSecureBootRegValue -Name 'AvailableUpdates' -KeyPath $SecureBootKey
     if ($currentAvailableUpdates -eq $AvailableUpdatesBitmask) {
         Write-CITLog -Message "AvailableUpdates already set to 0x$($AvailableUpdatesBitmask.ToString('X')) - waiting for servicing task to complete" -Level INFO -ScriptName 'Remediate-SecureBootCert'
         Write-Output "AvailableUpdates=0x$($AvailableUpdatesBitmask.ToString('X'));Status=AlreadySet;UEFICA2023Status=$status"
@@ -132,10 +142,9 @@ try {
 
     # 4. Optionally trigger the servicing task immediately rather than
     #    waiting up to 12 hours for the next scheduled run.
-    #    The task name is "Secure Boot certificate update" under
-    #    \Microsoft\Windows\SecureBoot\CertificateUpdate (if it exists).
+    #    The task path is \Microsoft\Windows\PI\Secure-Boot-Update per Microsoft docs.
     try {
-        $taskPath = '\Microsoft\Windows\SecureBoot\CertificateUpdate'
+        $taskPath = '\Microsoft\Windows\PI\Secure-Boot-Update'
         $task = Get-ScheduledTask -TaskPath $taskPath -ErrorAction SilentlyContinue | Select-Object -First 1
         if ($task) {
             Start-ScheduledTask -TaskPath $taskPath -TaskName $task.TaskName -ErrorAction SilentlyContinue

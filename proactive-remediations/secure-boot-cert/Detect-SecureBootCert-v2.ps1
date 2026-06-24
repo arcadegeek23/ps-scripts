@@ -3,6 +3,7 @@
 # certificate transition by reading the UEFICA2023Status registry value.
 # Author:  Kyle Etter
 # Created: 2026-06-19
+# Version: 2.2 - 2026-06-23 - Fix AvailableUpdates registry path (must be under SecureBoot parent, not Servicing subkey) + add $ProgressPreference
 # Version: 2.0 - 2026-06-22 - Inlined Write-CITLog (fixes IME cache dot-source failure)
 # Updated: 2026-06-20 - Replaced KB-only check with registry-status check
 # Tested:  Windows 10 22H2, Windows 11 23H2, Windows 11 24H2
@@ -35,6 +36,7 @@ param()
 
 $ErrorActionPreference = 'Stop'
 $WarningPreference     = 'Continue'
+$ProgressPreference    = 'SilentlyContinue'
 
 # Inline logging function (avoids external dot-source that fails in IME cache)
 function Write-CITLog {
@@ -54,6 +56,7 @@ function Write-CITLog {
 }
 
 # Registry path for Secure Boot certificate servicing status.
+$SecureBootKey = 'HKLM:\SYSTEM\CurrentControlSet\Control\SecureBoot'
 $SecureBootServicingKey = 'HKLM:\SYSTEM\CurrentControlSet\Control\SecureBoot\Servicing'
 
 function Test-CitSecureBootEnabled {
@@ -67,13 +70,16 @@ function Test-CitSecureBootEnabled {
 }
 
 function Get-CitSecureBootRegValue {
-    param([string]$Name)
+    param(
+        [string]$Name,
+        [string]$KeyPath = $SecureBootServicingKey
+    )
 
     try {
-        if (-not (Test-Path $SecureBootServicingKey)) {
+        if (-not (Test-Path $KeyPath)) {
             return $null
         }
-        $item = Get-ItemProperty -Path $SecureBootServicingKey -Name $Name -ErrorAction SilentlyContinue
+        $item = Get-ItemProperty -Path $KeyPath -Name $Name -ErrorAction SilentlyContinue
         if ($item -and $item.$Name -ne $null) {
             return $item.$Name
         }
@@ -123,7 +129,7 @@ try {
     # Status is null or unexpected value. Check if AvailableUpdates has been
     # set already - if so, the task may not have run yet (give it time).
     # If AvailableUpdates is not set, device needs remediation.
-    $availableUpdates = Get-CitSecureBootRegValue -Name 'AvailableUpdates'
+    $availableUpdates = Get-CitSecureBootRegValue -Name 'AvailableUpdates' -KeyPath $SecureBootKey
     $errorCode = Get-CitSecureBootRegValue -Name 'UEFICA2023Error'
 
     if ($errorCode -and $errorCode -ne 0) {
