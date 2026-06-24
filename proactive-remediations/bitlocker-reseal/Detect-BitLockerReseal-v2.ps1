@@ -15,6 +15,7 @@
 #
 # Author:  Kyle Etter / Zeus
 # Created: 2026-06-21
+# Version: 2.1 - 2026-06-23 - Add $ProgressPreference, fix Get-WinEvent error handling for PS 5.1
 # Version: 2.0 - 2026-06-22 - Inlined Write-CITLog (fixes IME cache dot-source failure)
 # Intune:  Proactive Remediation - Detection
 # Exit 0 = compliant, 1 = non-compliant (needs re-seal), 2+ = error
@@ -24,6 +25,7 @@ param()
 
 $ErrorActionPreference = 'Stop'
 $WarningPreference     = 'Continue'
+$ProgressPreference    = 'SilentlyContinue'
 
 # Inline logging function (avoids external dot-source that fails in IME cache)
 function Write-CITLog {
@@ -88,18 +90,18 @@ function Get-CitBitLockerRecoveryEventCount {
 
     try {
         $cutoff = (Get-Date).AddDays(-30)
+        # In PS 5.1, Get-WinEvent throws "No events were found" when the filter
+        # matches zero events. We use -ErrorAction SilentlyContinue and also
+        # wrap in try/catch to handle both the thrown error and the null return.
+        $events = $null
         $events = Get-WinEvent -FilterHashtable @{
             LogName = 'System'
             Id = 767
             StartTime = $cutoff
-        } -ErrorAction SilentlyContinue
+        } -ErrorAction SilentlyContinue 2>$null
 
-        if ($events) {
-            if ($events -is [array]) {
-                return $events.Count
-            } else {
-                return 1
-            }
+        if ($events -and $events.Count -gt 0) {
+            return $events.Count
         }
         return 0
     } catch {
