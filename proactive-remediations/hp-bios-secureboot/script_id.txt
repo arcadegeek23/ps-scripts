@@ -1,0 +1,6 @@
+8f9c6489-7d1b-48b7-af52-01c0a8624d8b
+# Created 2026-06-24 via Graph API
+# displayName: CIT - HP BIOS Update for Secure Boot
+# NOTE: name=None from Graph creation - may need portal recreation
+# Assignment: PORTAL ONLY (Graph assignment endpoints all 400)
+# Assigned to: CIT - Workstations (Win11 fleet) e54908d3-50cf-4e41-aba2-f432f1868e90
