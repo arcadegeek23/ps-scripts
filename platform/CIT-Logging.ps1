@@ -5,6 +5,14 @@
 # Logs to: C:\ProgramData\CIT\Logs\<ScriptName>.log
 # Format:  YYYY-MM-DD HH:mm:ss.fff [LEVEL] [ScriptName] message
 
+# Optional dot-source contract: callers may pass -ScriptName (the documented
+# usage above). The parameter is optional, so scripts that dot-source with no
+# arguments and call Write-CITLog -ScriptName '...' per-call still work unchanged.
+[Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', 'ScriptName', Justification = 'Accepted for the caller dot-source contract (callers dot-source with -ScriptName); intentionally not referenced in the helper body.')]
+param(
+    [string] $ScriptName
+)
+
 function Write-CITLog {
     [CmdletBinding()]
     param(
@@ -20,7 +28,22 @@ function Write-CITLog {
 
     $ts   = (Get-Date).ToString('yyyy-MM-dd HH:mm:ss.fff')
     $line = "$ts [$Level] [$ScriptName] $Message"
-    Add-Content -Path (Join-Path $logDir "$ScriptName.log") -Value $line -Encoding UTF8
+
+    # Best-effort logging: a transient file lock (concurrent write, AV scan) must
+    # never throw to the caller. Callers often run under $ErrorActionPreference='Stop',
+    # where an unguarded write failure would turn a successful action into an error
+    # exit. Retry briefly, then give up silently.
+    for ($attempt = 1; $attempt -le 3; $attempt++) {
+        try {
+            $logFile = Join-Path $logDir "$ScriptName.log"
+            Add-Content -Path $logFile -Value $line -Encoding UTF8 -ErrorAction Stop
+            break
+        }
+        catch {
+            if ($attempt -ge 3) { return }
+            Start-Sleep -Milliseconds 100
+        }
+    }
 }
 
 # Run a script block and emit a structured error to the log on failure.
@@ -34,7 +57,7 @@ function Invoke-CITSafely {
     )
 
     try {
-        & $ScriptBlock
+        & $ScriptBlock | Out-Null
         return $true
     } catch {
         $msg = if ($Context) { "$Context failed: $($_.Exception.Message)" } else { $_.Exception.Message }

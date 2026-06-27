@@ -1,0 +1,370 @@
+name: QA
+
+# Layered QA gate (CI tier). See docs/QA-PROCESS.md.
+# Authors run the local validation skill first (tools/Invoke-CITScriptValidation.ps1);
+# this workflow is the authoritative Windows gate.
+#
+# Gate model (ratcheting):
+#   * The BLOCKING job ("Analyze + Pester") only inspects files CHANGED in the PR,
+#     so a clean PR is never blocked by the repo's pre-existing baseline debt
+#     (legacy alias/Write-Host/PS5.1 violations and pre-existing broken tests).
+#   * The NON-BLOCKING job ("Repo baseline (report only)") scans the whole repo and
+#     runs the full Pester suite with continue-on-error, keeping the total debt
+#     visible so we ratchet it down as per-module fix PRs land.
+#
+# Self-contained: no secrets, no external services, no credentials. The live code-signing
+# cert is intentionally NOT in CI, so signature validation is a pre-deploy (Layer 3) step,
+# not part of this workflow.
+
+on:
+  pull_request:
+    paths:
+      - '**/*.ps1'
+      - 'PSScriptAnalyzerSettings.psd1'
+      - '.github/workflows/qa.yml'
+  push:
+    branches: [main]
+
+jobs:
+  analyze-and-test:
+    name: Analyze + Pester
+    runs-on: windows-latest
+    # The job needs to read the repo and post its diagnostic as a PR comment.
+    permissions:
+      contents: read
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Full history so the diff against the base branch resolves.
+          fetch-depth: 0
+
+      # Single diagnostic step: runs every blocking check, captures EVERYTHING into
+      # a markdown file regardless of individual failures, and records an overall
+      # pass/fail flag. The gate is enforced later via the flag, so a check failing
+      # here never aborts diagnostic capture.
+      - name: Analyze + Pester (diagnostic-capturing)
+        id: qa
+        shell: powershell
+        run: |
+          # Do NOT stop on errors: we want to capture every failure, not abort.
+          $ErrorActionPreference = 'Continue'
+          $diag = Join-Path $env:RUNNER_TEMP 'qa-diag.md'
+          $failed = $false
+          $reasons = New-Object System.Collections.Generic.List[string]
+
+          function Add-Md([string]$text) { Add-Content -LiteralPath $diag -Value $text -Encoding UTF8 }
+
+          # Start fresh.
+          Set-Content -LiteralPath $diag -Value "## QA gate diagnostic (Analyze + Pester)" -Encoding UTF8
+          Add-Md ""
+          Add-Md "_Auto-posted by the QA workflow because runner logs are not reachable from our environment._"
+          Add-Md ""
+
+          # --- Context -----------------------------------------------------------
+          Add-Md "### Context"
+          Add-Md ""
+          Add-Md "- Event: ``$($env:GITHUB_EVENT_NAME)``"
+          Add-Md "- Base ref: ``$($env:GITHUB_BASE_REF)``"
+          Add-Md "- Head ref: ``$($env:GITHUB_HEAD_REF)``"
+          Add-Md "- Commit: ``$($env:GITHUB_SHA)``"
+          Add-Md ""
+
+          # --- Changed *.ps1 detection ------------------------------------------
+          $changed = @()
+          try {
+            if ($env:GITHUB_EVENT_NAME -eq 'pull_request') {
+              $base = $env:GITHUB_BASE_REF
+              git fetch --no-tags origin $base 2>&1 | Out-Null
+              $diff = git diff --name-only "origin/$base...HEAD"
+            } else {
+              $diff = git diff --name-only 'HEAD~1...HEAD'
+            }
+            $changed = @($diff | Where-Object { $_ -match '\.ps1$' } |
+              Where-Object { Test-Path -LiteralPath $_ })
+          } catch {
+            $failed = $true
+            $reasons.Add("Changed-file detection threw: $($_.Exception.Message)")
+            Add-Md "### Changed-file detection FAILED"
+            Add-Md ""
+            Add-Md '```'
+            Add-Md ($_ | Out-String)
+            Add-Md '```'
+          }
+
+          Add-Md "### Changed *.ps1 files ($($changed.Count))"
+          Add-Md ""
+          if ($changed.Count -gt 0) {
+            Add-Md '```'
+            $changed | ForEach-Object { Add-Md $_ }
+            Add-Md '```'
+          } else {
+            Add-Md "_(none detected)_"
+          }
+          Add-Md ""
+
+          # --- Module install / import ------------------------------------------
+          # windows-latest ships PSScriptAnalyzer and Pester preinstalled. We rely on
+          # those first and only fall back to PSGallery when a module is genuinely
+          # missing. Install/repository failures are NON-FATAL: the gate fails ONLY
+          # when Import-Module fails for a required module, so a flaky PSGallery can
+          # never block a PR when the preinstalled module imports fine.
+          Add-Md "### Tooling install"
+          Add-Md ""
+          $toolingOk = $true
+          $toolingLog = New-Object System.Collections.Generic.List[string]
+          foreach ($mod in 'PSScriptAnalyzer','Pester') {
+            $source = 'preinstalled'
+            $available = @(Get-Module -ListAvailable -Name $mod)
+            if ($available.Count -eq 0) {
+              # Not preinstalled - attempt a best-effort install that never throws out.
+              $source = 'installed'
+              try {
+                [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+                # Register PSGallery only when absent. Set-PSRepository throws when the
+                # repository does not exist, so use Register-PSRepository -Default instead.
+                if (-not (Get-PSRepository -Name PSGallery -ErrorAction SilentlyContinue)) {
+                  Register-PSRepository -Default -ErrorAction SilentlyContinue
+                }
+                Install-Module $mod -Scope CurrentUser -Force -AllowClobber -SkipPublisherCheck -ErrorAction Stop
+              } catch {
+                # Install failure is non-fatal; the import below decides the verdict.
+                $source = 'install-skipped'
+                $toolingLog.Add("${mod}: install attempt failed (non-fatal) - $($_.Exception.Message)")
+              }
+            }
+            try {
+              Import-Module $mod -Force -ErrorAction Stop
+              $v = (Get-Module $mod | Select-Object -First 1).Version
+              $toolingLog.Add("${mod}: import OK v$v / $source")
+            } catch {
+              $toolingOk = $false
+              $toolingLog.Add("${mod}: import FAILED ($source) - $($_.Exception.Message)")
+            }
+          }
+          Add-Md '```'
+          $toolingLog | ForEach-Object { Add-Md $_ }
+          Add-Md '```'
+          Add-Md ""
+          if (-not $toolingOk) {
+            $failed = $true
+            $reasons.Add("Required module import failed (see Tooling install section).")
+          }
+
+          # --- PSScriptAnalyzer (changed files, blocking on Error severity) -----
+          Add-Md "### PSScriptAnalyzer (changed files)"
+          Add-Md ""
+          $psaFiles = @($changed | Where-Object { Test-Path -LiteralPath $_ })
+          if ($psaFiles.Count -eq 0) {
+            Add-Md "_No changed *.ps1 files to analyze._"
+          } elseif (-not $toolingOk) {
+            Add-Md "_Skipped: tooling did not install._"
+          } else {
+            try {
+              # Invoke-ScriptAnalyzer -Path takes a single string, not an array,
+              # so analyze one changed file per call and aggregate the results.
+              $psa = @()
+              foreach ($pf in $psaFiles) {
+                if ([string]::IsNullOrWhiteSpace($pf)) { continue }
+                $psa += Invoke-ScriptAnalyzer -Path $pf -Settings ./PSScriptAnalyzerSettings.psd1 -ErrorAction Continue
+              }
+              $psa = @($psa)
+              if ($psa.Count -eq 0) {
+                Add-Md "_No findings._"
+              } else {
+                Add-Md "| RuleName | Severity | ScriptName | Line | Message |"
+                Add-Md "| --- | --- | --- | --- | --- |"
+                foreach ($r in $psa) {
+                  $msg = ($r.Message -replace '\|','\|' -replace '[\r\n]+',' ')
+                  Add-Md "| $($r.RuleName) | $($r.Severity) | $($r.ScriptName) | $($r.Line) | $msg |"
+                }
+              }
+              $psaErrors = @($psa | Where-Object { $_.Severity -eq 'Error' })
+              if ($psaErrors.Count -gt 0) {
+                $failed = $true
+                $reasons.Add("PSScriptAnalyzer: $($psaErrors.Count) Error-severity finding(s).")
+              }
+            } catch {
+              $failed = $true
+              $reasons.Add("PSScriptAnalyzer threw: $($_.Exception.Message)")
+              Add-Md '```'
+              Add-Md ($_ | Out-String)
+              Add-Md '```'
+            }
+          }
+          Add-Md ""
+
+          # --- Encoding / BOM lint (changed files, blocking) --------------------
+          Add-Md "### Encoding / BOM lint (changed files)"
+          Add-Md ""
+          $lintFiles = @($changed | Where-Object { $_ -notmatch '[\\/]archived[\\/]' -and (Test-Path -LiteralPath $_) })
+          if ($lintFiles.Count -eq 0) {
+            Add-Md "_No changed *.ps1 files to lint._"
+          } else {
+            $bad = @()
+            foreach ($f in $lintFiles) {
+              $bytes   = [System.IO.File]::ReadAllBytes($f)
+              $hasBom  = $bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF
+              $nonAscii = $false
+              foreach ($b in $bytes) { if ($b -gt 0x7F) { $nonAscii = $true; break } }
+              if ($nonAscii -and -not $hasBom) { $bad += $f }
+            }
+            if ($bad.Count -gt 0) {
+              $failed = $true
+              $reasons.Add("BOM lint: $($bad.Count) BOM-less file(s) with non-ASCII bytes.")
+              Add-Md '```'
+              $bad | ForEach-Object { Add-Md $_ }
+              Add-Md '```'
+            } else {
+              Add-Md "_OK (no BOM-less non-ASCII files)._"
+            }
+          }
+          Add-Md ""
+
+          # --- Pester (changed scripts + platform contract, blocking) ----------
+          Add-Md "### Pester (blocking)"
+          Add-Md ""
+          $testFiles = New-Object System.Collections.Generic.List[string]
+          $platformTest = './platform/CIT-Logging.Tests.ps1'
+          if (Test-Path -LiteralPath $platformTest) { $testFiles.Add((Resolve-Path $platformTest).Path) }
+          foreach ($c in $changed) {
+            if ($c -match '\.Tests\.ps1$') {
+              if (Test-Path -LiteralPath $c) { $testFiles.Add((Resolve-Path $c).Path) }
+            } else {
+              $candidate = [System.IO.Path]::ChangeExtension($c, $null).TrimEnd('.') + '.Tests.ps1'
+              if (Test-Path -LiteralPath $candidate) { $testFiles.Add((Resolve-Path $candidate).Path) }
+            }
+          }
+          $unique = @($testFiles | Select-Object -Unique)
+
+          if ($unique.Count -eq 0) {
+            Add-Md "_No relevant test files._"
+          } elseif (-not $toolingOk) {
+            Add-Md "_Skipped: tooling did not install._"
+          } else {
+            Add-Md "Test files:"
+            Add-Md '```'
+            $unique | ForEach-Object { Add-Md $_ }
+            Add-Md '```'
+            try {
+              $cfg = New-PesterConfiguration
+              $cfg.Run.Path             = $unique
+              $cfg.Run.Throw            = $false   # capture results; we enforce the gate ourselves
+              $cfg.Run.PassThru         = $true
+              $cfg.TestResult.Enabled   = $true
+              $cfg.TestResult.OutputPath = 'testResults-blocking.xml'
+              $cfg.Output.Verbosity     = 'Detailed'
+              $pres = Invoke-Pester -Configuration $cfg
+              Add-Md ""
+              Add-Md "Totals: $($pres.TotalCount) total / $($pres.PassedCount) passed / $($pres.FailedCount) failed / $($pres.SkippedCount) skipped."
+              if ($pres.FailedCount -gt 0) {
+                $failed = $true
+                $reasons.Add("Pester: $($pres.FailedCount) failing test(s).")
+                Add-Md ""
+                Add-Md "Failed tests:"
+                foreach ($t in $pres.Failed) {
+                  Add-Md "- **$($t.ExpandedPath)**"
+                  $err = ($t.ErrorRecord | Out-String).Trim()
+                  if ($err) {
+                    Add-Md '```'
+                    Add-Md $err
+                    Add-Md '```'
+                  }
+                }
+              }
+            } catch {
+              $failed = $true
+              $reasons.Add("Pester run threw: $($_.Exception.Message)")
+              Add-Md '```'
+              Add-Md ($_ | Out-String)
+              Add-Md '```'
+            }
+          }
+          Add-Md ""
+
+          # --- Verdict ----------------------------------------------------------
+          Add-Md "### Verdict"
+          Add-Md ""
+          if ($failed) {
+            Add-Md ":x: **QA gate FAILED.**"
+            Add-Md ""
+            $reasons | ForEach-Object { Add-Md "- $_" }
+          } else {
+            Add-Md ":white_check_mark: **QA gate passed.**"
+          }
+
+          "failed=$($failed.ToString().ToLower())" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding ascii
+          Write-Output (Get-Content -LiteralPath $diag -Raw)
+
+      - name: Post diagnostic as PR comment
+        if: always() && github.event_name == 'pull_request'
+        shell: powershell
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          $diag = Join-Path $env:RUNNER_TEMP 'qa-diag.md'
+          if ($env:PR_NUMBER -and (Test-Path -LiteralPath $diag)) {
+            gh pr comment "$env:PR_NUMBER" --body-file "$diag"
+          } else {
+            Write-Output "No PR number or no diagnostic file - skipping comment."
+          }
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pester-results-blocking
+          path: testResults-blocking.xml
+          if-no-files-found: ignore
+
+      - name: Enforce gate
+        if: always()
+        shell: powershell
+        run: |
+          if ('${{ steps.qa.outputs.failed }}' -eq 'true') {
+            Write-Error "QA gate failed - see the diagnostic PR comment / step log above."
+            exit 1
+          }
+          Write-Output "QA gate passed."
+
+  repo-baseline:
+    name: Repo baseline (report only)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install tooling
+        shell: powershell
+        run: |
+          Set-PSRepository PSGallery -InstallationPolicy Trusted
+          Install-Module PSScriptAnalyzer -MinimumVersion 1.22.0 -Scope CurrentUser -Force
+          Install-Module Pester           -MinimumVersion 5.5.0  -Scope CurrentUser -Force
+
+      - name: PSScriptAnalyzer (whole repo, non-blocking)
+        continue-on-error: true
+        shell: powershell
+        run: |
+          $results = Invoke-ScriptAnalyzer -Path . -Recurse -Settings ./PSScriptAnalyzerSettings.psd1
+          $results | Format-Table -AutoSize | Out-String | Write-Output
+          $errors = @($results | Where-Object { $_.Severity -eq 'Error' })
+          $warnings = @($results | Where-Object { $_.Severity -eq 'Warning' })
+          Write-Output "Baseline debt: $($errors.Count) Error / $($warnings.Count) Warning finding(s)."
+
+      - name: Pester (whole suite, non-blocking)
+        continue-on-error: true
+        shell: powershell
+        run: |
+          $cfg = New-PesterConfiguration
+          $cfg.Run.Path           = './'
+          $cfg.Run.Throw          = $false       # report only; do not fail the job
+          $cfg.TestResult.Enabled = $true
+          $cfg.TestResult.OutputPath = 'testResults-baseline.xml'
+          $cfg.Output.Verbosity   = 'Detailed'
+          Invoke-Pester -Configuration $cfg
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pester-results-baseline
+          path: testResults-baseline.xml
+          if-no-files-found: ignore
