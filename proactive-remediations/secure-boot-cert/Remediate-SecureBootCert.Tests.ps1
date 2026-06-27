@@ -1,3 +1,4 @@
+#Requires -Version 5.1
 # Remediate-SecureBootCert.Tests.ps1
 # Pester 5+ tests for Remediate-SecureBootCert-v2.ps1
 # Updated 2026-06-23 - Rewritten for v2 registry-bitmask remediation model

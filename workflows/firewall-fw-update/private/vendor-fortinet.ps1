@@ -1,3 +1,4 @@
+#Requires -Version 5.1
 # vendor-fortinet.ps1
 # Fortinet SSH helper functions for firewall PIA scripts.
 # Author:  Kyle Etter

@@ -1,3 +1,4 @@
+#Requires -Version 5.1
 <#
 .SYNOPSIS
     Validate a single CIT Intune PowerShell script before committing.

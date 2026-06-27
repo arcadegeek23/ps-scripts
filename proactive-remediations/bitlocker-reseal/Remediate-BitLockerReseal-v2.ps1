@@ -1,3 +1,4 @@
+#Requires -Version 5.1
 # Remediate-BitLockerReseal.ps1
 # Re-seals BitLocker to the current boot measurements after the Secure Boot
 # certificate transition. Suspends BitLocker for one reboot so it re-seals

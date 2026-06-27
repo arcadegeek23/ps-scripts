@@ -1,3 +1,4 @@
+#Requires -Version 5.1
 # Detect-BitLockerReseal.ps1
 # Detects whether a device needs a BitLocker re-seal after the Secure Boot
 # certificate transition. After the 2011-to-2023 cert update changes the

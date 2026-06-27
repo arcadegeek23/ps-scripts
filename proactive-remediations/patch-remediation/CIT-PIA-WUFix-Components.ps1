@@ -1,3 +1,4 @@
+#Requires -Version 5.1
 # CIT-PIA-WUFix-Components.ps1
 # Resets Windows Update components, repairs the component store, and re-scans.
 # Author:  Kyle Etter

@@ -1,3 +1,4 @@
+#Requires -Version 5.1
 # CIT-Logging.ps1
 # Shared logging helpers for all CIT Intune scripts.
 # Source with: . "$PSScriptRoot\..\platform\CIT-Logging.ps1" -ScriptName 'MyScript'

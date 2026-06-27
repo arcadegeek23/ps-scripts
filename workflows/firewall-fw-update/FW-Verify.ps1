@@ -1,3 +1,4 @@
+#Requires -Version 5.1
 # FW-Verify.ps1
 # Wait for firewall reboot, confirm new firmware and uptime.
 # Author:  Kyle Etter

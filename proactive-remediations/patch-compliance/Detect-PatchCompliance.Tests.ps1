@@ -1,3 +1,4 @@
+#Requires -Version 5.1
 # Detect-PatchCompliance.Tests.ps1
 # Pester 5+ tests for Detect-PatchCompliance-v1.ps1
 # Covers: parse/load, exit-code contract, and the freshness false-compliant

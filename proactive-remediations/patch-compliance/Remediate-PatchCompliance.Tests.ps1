@@ -1,3 +1,4 @@
+#Requires -Version 5.1
 # Remediate-PatchCompliance.Tests.ps1
 # Pester 5+ tests for Remediate-PatchCompliance-v1.ps1
 # Covers: parse/load, exit-code contract, and the freshness false-compliant

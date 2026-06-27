@@ -1,3 +1,4 @@
+#Requires -Version 5.1
 # Detect-SecureBootCert.ps1
 # Detects whether a device has completed the Secure Boot 2011-to-2023
 # certificate transition by reading the UEFICA2023Status registry value.

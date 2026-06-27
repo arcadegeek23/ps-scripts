@@ -1,3 +1,4 @@
+#Requires -Version 5.1
 # CIT-PIA-WUDiag.ps1
 # Diagnoses Windows Update patch-install failure mode and recommends a fix branch.
 # Author:  Kyle Etter

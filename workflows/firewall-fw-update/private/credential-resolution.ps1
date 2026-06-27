@@ -1,3 +1,4 @@
+#Requires -Version 5.1
 # credential-resolution.ps1
 # Shared SSH credential resolver for firewall PIA scripts.
 # Author:  Kyle Etter

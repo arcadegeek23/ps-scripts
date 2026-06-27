@@ -1,3 +1,4 @@
+#Requires -Version 5.1
 # FW-Diag.ps1
 # SSH to firewall, gather model/firmware/HA/uptime JSON.
 # Author:  Kyle Etter

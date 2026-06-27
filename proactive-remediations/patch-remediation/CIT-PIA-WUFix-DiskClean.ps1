@@ -1,3 +1,4 @@
+#Requires -Version 5.1
 # CIT-PIA-WUFix-DiskClean.ps1
 # Frees disk space by running Disk Cleanup, DISM component cleanup, and temp folder cleanup.
 # Author:  Kyle Etter
