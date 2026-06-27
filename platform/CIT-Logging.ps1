@@ -56,7 +56,7 @@ function Invoke-CITSafely {
     )
 
     try {
-        & $ScriptBlock
+        & $ScriptBlock | Out-Null
         return $true
     } catch {
         $msg = if ($Context) { "$Context failed: $($_.Exception.Message)" } else { $_.Exception.Message }
