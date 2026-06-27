@@ -1,3 +1,4 @@
+#Requires -Version 5.1
 # CIT-PIA-WUFix-Components.Tests.ps1
 # Pester 5+ tests for CIT-PIA-WUFix-Components.ps1
 

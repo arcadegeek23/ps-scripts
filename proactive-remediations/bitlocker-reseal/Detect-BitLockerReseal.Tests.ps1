@@ -1,3 +1,4 @@
+#Requires -Version 5.1
 # Detect-BitLockerReseal.Tests.ps1
 # Pester 5+ tests for Detect-BitLockerReseal-v2.ps1
 # Added 2026-06-27 - First test coverage for the bitlocker-reseal module

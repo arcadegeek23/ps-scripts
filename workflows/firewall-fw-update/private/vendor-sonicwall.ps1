@@ -1,3 +1,4 @@
+#Requires -Version 5.1
 # vendor-sonicwall.ps1
 # SonicWall SSH helper functions for firewall PIA scripts.
 # Author:  Kyle Etter

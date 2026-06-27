@@ -30,7 +30,7 @@ summarize the `FAIL` rows for the author and propose the listed remedy for each.
 .\tools\Invoke-CITScriptValidation.ps1 -Path .\proactive-remediations\patch-compliance\Detect-PatchCompliance-v1.ps1 -Json
 
 # Analyzer + lint only (skip the Pester run):
-.\tools\Invoke-CITScriptValidation.ps1 -Path .\proactive-remediations\firewall-fw-update\FW-Diag.ps1 -SkipPester
+.\tools\Invoke-CITScriptValidation.ps1 -Path .\workflows\firewall-fw-update\FW-Diag.ps1 -SkipPester
 ```
 
 ## What it checks

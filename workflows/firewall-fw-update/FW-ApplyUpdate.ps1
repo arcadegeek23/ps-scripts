@@ -1,3 +1,4 @@
+#Requires -Version 5.1
 # FW-ApplyUpdate.ps1
 # Triggers install of staged firmware image and reboots firewall.
 # Author:  Kyle Etter

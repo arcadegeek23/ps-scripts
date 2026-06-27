@@ -1,3 +1,4 @@
+#Requires -Version 5.1
 # FW-Diag.Tests.ps1
 # Pester 5+ tests for FW-Diag.ps1
 

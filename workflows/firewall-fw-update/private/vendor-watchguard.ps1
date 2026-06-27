@@ -1,3 +1,4 @@
+#Requires -Version 5.1
 # vendor-watchguard.ps1
 # WatchGuard placeholder vendor partial for firewall PIA scripts.
 # Author:  Kyle Etter

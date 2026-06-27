@@ -1,3 +1,4 @@
+#Requires -Version 5.1
 # Remediate-SecureBootCert.ps1
 # Sets the AvailableUpdates registry bitmask to trigger the Windows Secure
 # Boot certificate servicing task, which applies the 2023 UEFI CA certificates.

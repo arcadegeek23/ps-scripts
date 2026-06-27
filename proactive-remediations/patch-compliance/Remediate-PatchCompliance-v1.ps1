@@ -1,3 +1,4 @@
+#Requires -Version 5.1
 # Remediate-PatchCompliance.ps1
 # Safety-net remediation: triggers Windows Update to scan, download, and
 # install missing quality updates and feature updates. Runs alongside

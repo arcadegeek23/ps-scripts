@@ -1,3 +1,4 @@
+#Requires -Version 5.1
 # CIT-PIA-WUFix-Reboot.ps1
 # Handles pending-reboot remediation by checking logged-in user state.
 # Author:  Kyle Etter

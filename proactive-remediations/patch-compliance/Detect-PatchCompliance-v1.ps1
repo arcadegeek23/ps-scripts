@@ -1,3 +1,4 @@
+#Requires -Version 5.1
 # Detect-PatchCompliance.ps1
 # Safety-net detection: checks whether a device is fully patched on both
 # quality updates and feature updates. Designed to run alongside Datto RMM

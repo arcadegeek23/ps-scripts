@@ -50,7 +50,7 @@ This folder intentionally does **not** follow the standard Detect/Remediate pair
 2. **Diagnostic**
 
    ```powershell
-   cd proactive-remediations\firewall-fw-update
+   cd workflows\firewall-fw-update
    .\FW-Diag.ps1 -FirewallAddress 192.168.1.1 -Vendor SonicWall -TargetFirmware 'SonicOS 7.1.2-7018-R6177'
    ```
 
@@ -110,7 +110,7 @@ does not hang under the non-interactive SYSTEM context.
 Run all tests from the repo root:
 
 ```powershell
-Invoke-Pester ./proactive-remediations/firewall-fw-update/
+Invoke-Pester ./workflows/firewall-fw-update/
 ```
 
 Required test cases are included for each script: syntax parse, AST function-name presence checks, and log-file creation (skipped on non-Windows).

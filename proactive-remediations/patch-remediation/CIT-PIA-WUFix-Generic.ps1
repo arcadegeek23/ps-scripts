@@ -1,3 +1,4 @@
+#Requires -Version 5.1
 # CIT-PIA-WUFix-Generic.ps1
 # Performs a soft reset of Windows Update for generic patch-install failures.
 # Author:  Kyle Etter

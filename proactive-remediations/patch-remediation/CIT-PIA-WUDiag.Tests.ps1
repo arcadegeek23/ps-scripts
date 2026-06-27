@@ -1,3 +1,4 @@
+#Requires -Version 5.1
 # CIT-PIA-WUDiag.Tests.ps1
 # Pester 5+ tests for CIT-PIA-WUDiag.ps1
 

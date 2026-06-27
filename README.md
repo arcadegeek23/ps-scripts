@@ -7,6 +7,7 @@ PowerShell scripts for Microsoft Intune endpoint management — owned by **CIT S
 | Folder | Purpose |
 |---|---|
 | `proactive-remediations/` | Detection + remediation script pairs run by Intune PIA (Proactive Remediations) |
+| `workflows/` | Multi-step orchestrations that don't fit the Detect/Remediate pair pattern (e.g. SSH-driven runbooks) |
 | `compliance/` | Custom compliance JSON + PowerShell discovery scripts |
 | `win32-apps/` | IntuneWin packaging helpers, install/uninstall scripts, detection rules |
 | `endpoint-security/` | Defender, firewall, ASR rule, BitLocker scripts |
@@ -34,6 +35,10 @@ proactive-remediations/
 ```
 
 Intune uploads these as **Detection script** and **Remediation script** respectively.
+
+Not every package fits this pattern. Multi-step orchestrations — such as the
+SSH-driven `firewall-fw-update` runbook — live under `workflows/` instead of
+`proactive-remediations/`.
 
 ## Testing
 

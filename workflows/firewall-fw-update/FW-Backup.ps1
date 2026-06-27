@@ -1,41 +1,33 @@
-# FW-StageFirmware.ps1
-# SCP firmware image to firewall without installing.
+#Requires -Version 5.1
+# FW-Backup.ps1
+# Pre-upgrade config backup to probe share.
 # Author:  Kyle Etter
 # Created: 2026-06-13
 # Updated: 2026-06-13
 # Tested:  Windows 10 22H2, Windows 11 23H2
 # Intune:  Proactive Remediation - Remediation
-# Notes:   Uploads image to firewall storage only. Does not trigger install or reboot.
-#          Idempotent: re-upload overwrites same filename on the firewall.
+# Notes:   Writes backup to \\<probe>\FWBackups\<site>\<model>_<timestamp>.cfg|conf.
+#          Aborts with exit 2 on backup failure. Idempotent: timestamped filenames.
 
 [CmdletBinding()]
 param(
     [Parameter(Mandatory)] [string] $FirewallAddress,
     [Parameter(Mandatory)] [ValidateSet('SonicWall','Fortinet')] [string] $Vendor,
-    [Parameter(Mandatory)] [string] $ImagePath,
+    [Parameter(Mandatory)] [string] $SiteCode,
+    [Parameter(Mandatory)] [string] $BackupRoot,
     [Parameter()] [string] $KeyPath = ''
 )
 
 $ErrorActionPreference = 'Stop'
 $WarningPreference     = 'Continue'
 
-. "$PSScriptRoot\..\..\platform\CIT-Logging.ps1" -ScriptName 'FW-StageFirmware'
+. "$PSScriptRoot\..\..\platform\CIT-Logging.ps1" -ScriptName 'FW-Backup'
 . "$PSScriptRoot\private\credential-resolution.ps1"
 
 try {
-    Write-CITLog -Message "Starting firmware staging for $Vendor at $FirewallAddress" -Level INFO -ScriptName 'FW-StageFirmware'
+    Write-CITLog -Message "Starting firewall backup for $Vendor at $FirewallAddress" -Level INFO -ScriptName 'FW-Backup'
 
-    if (-not (Test-Path $ImagePath)) {
-        Write-CITLog -Message "Firmware image not found at $ImagePath" -Level ERROR -ScriptName 'FW-StageFirmware'
-        [PSCustomObject]@{
-            Action    = 'IMAGE_NOT_FOUND'
-            ImagePath = $ImagePath
-            Timestamp = (Get-Date).ToString('o')
-        } | ConvertTo-Json -Compress | Write-Output
-        exit 2
-    }
-
-    if (-not (Assert-CitPoshSsh -ScriptName 'FW-StageFirmware')) {
+    if (-not (Assert-CitPoshSsh -ScriptName 'FW-Backup')) {
         [PSCustomObject]@{
             Action    = 'POSH_SSH_UNAVAILABLE'
             Message   = 'Posh-SSH module is not available to this process. Install it machine-wide: Install-Module Posh-SSH -Scope AllUsers.'
@@ -74,33 +66,33 @@ try {
         $sessionParams['Credential'] = $credential.Credential
     }
 
-    $session = New-SSHSession @sessionParams
+    $session      = New-SSHSession @sessionParams
+    $destination  = Join-Path $BackupRoot $SiteCode
+    $backupResult = $null
 
-    $stageResult = $null
     switch ($Vendor) {
-        'SonicWall' { $stageResult = Save-CitSonicWallFirmware -SshSession $session -ImagePath $ImagePath }
-        'Fortinet'  { $stageResult = Save-CitFortinetFirmware -SshSession $session -ImagePath $ImagePath }
+        'SonicWall' { $backupResult = Backup-CitSonicWallConfig -SshSession $session -DestinationPath $destination }
+        'Fortinet'  { $backupResult = Backup-CitFortinetConfig -SshSession $session -DestinationPath $destination }
     }
 
     Remove-SSHSession -SSHSession $session | Out-Null
 
-    $stageResult | ConvertTo-Json -Compress | Write-Output
-
-    if (-not $stageResult.Staged) {
-        Write-CITLog -Message "Firmware staging failed: $($stageResult.Error)" -Level ERROR -ScriptName 'FW-StageFirmware'
+    if (-not $backupResult.Success) {
+        Write-CITLog -Message "Backup failed: $($backupResult.BackupError)" -Level ERROR -ScriptName 'FW-Backup'
+        $backupResult | ConvertTo-Json -Compress | Write-Output
         exit 2
     }
 
-    Write-CITLog -Message "Firmware staged successfully: $($stageResult.FileName)" -Level INFO -ScriptName 'FW-StageFirmware'
+    $backupResult | ConvertTo-Json -Compress | Write-Output
+    Write-CITLog -Message "Backup complete: $($backupResult.FilePath)" -Level INFO -ScriptName 'FW-Backup'
     exit 0
 } catch {
-    Write-CITLog -Message "Firmware staging error: $($_.Exception.Message)" -Level ERROR -ScriptName 'FW-StageFirmware'
+    Write-CITLog -Message "Backup error: $($_.Exception.Message)" -Level ERROR -ScriptName 'FW-Backup'
     [PSCustomObject]@{
-        Action    = 'STAGE_ERROR'
+        Action    = 'BACKUP_ERROR'
         Message   = $_.Exception.Message
         Vendor    = $Vendor
         Firewall  = $FirewallAddress
-        ImagePath = $ImagePath
         Timestamp = (Get-Date).ToString('o')
     } | ConvertTo-Json -Compress | Write-Output
     exit 2

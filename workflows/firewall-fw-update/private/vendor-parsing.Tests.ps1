@@ -1,3 +1,4 @@
+#Requires -Version 5.1
 # vendor-parsing.Tests.ps1
 # Pester 5+ tests for the firewall vendor partials and credential resolver.
 # These exercise the deploy-failure guards added for SYSTEM context, the

@@ -1,3 +1,4 @@
+#Requires -Version 5.1
 # CIT-PIA-WUFix-Generic.Tests.ps1
 # Pester 5+ tests for CIT-PIA-WUFix-Generic.ps1
 

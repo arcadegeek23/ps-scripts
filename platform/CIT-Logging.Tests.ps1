@@ -1,3 +1,4 @@
+#Requires -Version 5.1
 # CIT-Logging.Tests.ps1
 # Pester 5+ tests for platform/CIT-Logging.ps1
 #
