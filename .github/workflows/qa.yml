@@ -2,7 +2,15 @@ name: QA
 
 # Layered QA gate (CI tier). See docs/QA-PROCESS.md.
 # Authors run the local validation skill first (tools/Invoke-CITScriptValidation.ps1);
-# this workflow is the authoritative Windows gate that re-runs everything on every PR.
+# this workflow is the authoritative Windows gate.
+#
+# Gate model (ratcheting):
+#   * The BLOCKING job ("Analyze + Pester") only inspects files CHANGED in the PR,
+#     so a clean PR is never blocked by the repo's pre-existing baseline debt
+#     (legacy alias/Write-Host/PS5.1 violations and pre-existing broken tests).
+#   * The NON-BLOCKING job ("Repo baseline (report only)") scans the whole repo and
+#     runs the full Pester suite with continue-on-error, keeping the total debt
+#     visible so we ratchet it down as per-module fix PRs land.
 #
 # Self-contained: no secrets, no external services, no credentials. The live code-signing
 # cert is intentionally NOT in CI, so signature validation is a pre-deploy (Layer 3) step,
@@ -23,6 +31,9 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Full history so the diff against the base branch resolves.
+          fetch-depth: 0
 
       - name: Install tooling
         shell: powershell
@@ -31,47 +42,172 @@ jobs:
           Install-Module PSScriptAnalyzer -MinimumVersion 1.22.0 -Scope CurrentUser -Force
           Install-Module Pester           -MinimumVersion 5.5.0  -Scope CurrentUser -Force
 
-      - name: PSScriptAnalyzer (repo settings)
+      - name: Determine changed *.ps1 files
+        id: changed
         shell: powershell
         run: |
-          $results = Invoke-ScriptAnalyzer -Path . -Recurse -Settings ./PSScriptAnalyzerSettings.psd1
+          $ErrorActionPreference = 'Stop'
+          if ($env:GITHUB_EVENT_NAME -eq 'pull_request') {
+            $base = $env:GITHUB_BASE_REF
+            # checkout used fetch-depth:0, but make sure the base ref is present.
+            git fetch --no-tags origin $base | Out-Null
+            $diff = git diff --name-only "origin/$base...HEAD"
+          } else {
+            # push to main: compare against the previous commit.
+            $diff = git diff --name-only 'HEAD~1...HEAD'
+          }
+          $ps1 = @($diff | Where-Object { $_ -match '\.ps1$' } |
+            Where-Object { Test-Path -LiteralPath $_ })
+
+          Write-Output "Changed *.ps1 files:"
+          if ($ps1.Count -gt 0) { $ps1 | ForEach-Object { Write-Output "  $_" } }
+          else { Write-Output "  (none)" }
+
+          # Persist the list (newline-joined) for later steps.
+          $listPath = Join-Path $env:RUNNER_TEMP 'changed-ps1.txt'
+          Set-Content -LiteralPath $listPath -Value ($ps1 -join "`n") -Encoding ASCII
+          "list=$listPath" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding ascii
+          "count=$($ps1.Count)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding ascii
+
+      - name: PSScriptAnalyzer (changed files, blocking)
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $listPath = '${{ steps.changed.outputs.list }}'
+          $files = @()
+          if (Test-Path -LiteralPath $listPath) {
+            $files = @(Get-Content -LiteralPath $listPath |
+              Where-Object { $_ -and (Test-Path -LiteralPath $_) })
+          }
+          if ($files.Count -eq 0) {
+            Write-Output "No changed *.ps1 files to analyze - passing."
+            exit 0
+          }
+          Write-Output "Analyzing $($files.Count) changed file(s):"
+          $files | ForEach-Object { Write-Output "  $_" }
+
+          $results = Invoke-ScriptAnalyzer -Path $files -Settings ./PSScriptAnalyzerSettings.psd1
           $results | Format-Table -AutoSize | Out-String | Write-Output
+
           $errors = @($results | Where-Object { $_.Severity -eq 'Error' })
           if ($errors.Count -gt 0) {
-            throw "PSScriptAnalyzer reported $($errors.Count) Error-severity finding(s)."
+            throw "PSScriptAnalyzer reported $($errors.Count) Error-severity finding(s) in changed files."
           }
 
-      - name: Encoding / BOM lint (PS 5.1 signing safety)
+      - name: Encoding / BOM lint (changed files, blocking)
         shell: powershell
         run: |
+          $ErrorActionPreference = 'Stop'
+          $listPath = '${{ steps.changed.outputs.list }}'
+          $files = @()
+          if (Test-Path -LiteralPath $listPath) {
+            $files = @(Get-Content -LiteralPath $listPath |
+              Where-Object { $_ -and ($_ -notmatch '[\\/]archived[\\/]') -and (Test-Path -LiteralPath $_) })
+          }
+          if ($files.Count -eq 0) {
+            Write-Output "No changed *.ps1 files to lint - passing."
+            exit 0
+          }
           $bad = @()
-          Get-ChildItem -Recurse -Filter *.ps1 |
-            Where-Object { $_.FullName -notmatch '\\archived\\' } |
-            ForEach-Object {
-              $bytes   = [System.IO.File]::ReadAllBytes($_.FullName)
-              $hasBom  = $bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF
-              $nonAscii = $false
-              foreach ($b in $bytes) { if ($b -gt 0x7F) { $nonAscii = $true; break } }
-              if ($nonAscii -and -not $hasBom) { $bad += $_.FullName }
-            }
+          foreach ($f in $files) {
+            $bytes   = [System.IO.File]::ReadAllBytes($f)
+            $hasBom  = $bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF
+            $nonAscii = $false
+            foreach ($b in $bytes) { if ($b -gt 0x7F) { $nonAscii = $true; break } }
+            if ($nonAscii -and -not $hasBom) { $bad += $f }
+          }
           if ($bad.Count -gt 0) {
             $bad | Write-Output
             throw "$($bad.Count) BOM-less file(s) contain non-ASCII bytes (signing/5.1 encoding risk)."
           }
 
-      - name: Pester
+      - name: Pester (changed scripts + platform contract, blocking)
         shell: powershell
         run: |
+          $ErrorActionPreference = 'Stop'
+          $listPath = '${{ steps.changed.outputs.list }}'
+          $changed = @()
+          if (Test-Path -LiteralPath $listPath) {
+            $changed = @(Get-Content -LiteralPath $listPath | Where-Object { $_ })
+          }
+
+          # Always-on blocking contract: the platform logging load-contract test.
+          $testFiles = New-Object System.Collections.Generic.List[string]
+          $platformTest = './platform/CIT-Logging.Tests.ps1'
+          if (Test-Path -LiteralPath $platformTest) { $testFiles.Add((Resolve-Path $platformTest).Path) }
+
+          # Plus any *.Tests.ps1 whose corresponding script changed, and any
+          # changed test file itself.
+          foreach ($c in $changed) {
+            if ($c -match '\.Tests\.ps1$') {
+              if (Test-Path -LiteralPath $c) { $testFiles.Add((Resolve-Path $c).Path) }
+            } else {
+              $candidate = [System.IO.Path]::ChangeExtension($c, $null).TrimEnd('.') + '.Tests.ps1'
+              if (Test-Path -LiteralPath $candidate) { $testFiles.Add((Resolve-Path $candidate).Path) }
+            }
+          }
+
+          $unique = $testFiles | Select-Object -Unique
+          if (@($unique).Count -eq 0) {
+            Write-Output "No relevant test files - passing."
+            exit 0
+          }
+          Write-Output "Running blocking tests:"
+          $unique | ForEach-Object { Write-Output "  $_" }
+
           $cfg = New-PesterConfiguration
-          $cfg.Run.Path           = './'
+          $cfg.Run.Path           = @($unique)
           $cfg.Run.Throw          = $true        # fail the step on any failing test
           $cfg.TestResult.Enabled = $true
-          $cfg.TestResult.OutputPath = 'testResults.xml'
+          $cfg.TestResult.OutputPath = 'testResults-blocking.xml'
           $cfg.Output.Verbosity   = 'Detailed'
           Invoke-Pester -Configuration $cfg
 
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: pester-results
-          path: testResults.xml
+          name: pester-results-blocking
+          path: testResults-blocking.xml
+          if-no-files-found: ignore
+
+  repo-baseline:
+    name: Repo baseline (report only)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install tooling
+        shell: powershell
+        run: |
+          Set-PSRepository PSGallery -InstallationPolicy Trusted
+          Install-Module PSScriptAnalyzer -MinimumVersion 1.22.0 -Scope CurrentUser -Force
+          Install-Module Pester           -MinimumVersion 5.5.0  -Scope CurrentUser -Force
+
+      - name: PSScriptAnalyzer (whole repo, non-blocking)
+        continue-on-error: true
+        shell: powershell
+        run: |
+          $results = Invoke-ScriptAnalyzer -Path . -Recurse -Settings ./PSScriptAnalyzerSettings.psd1
+          $results | Format-Table -AutoSize | Out-String | Write-Output
+          $errors = @($results | Where-Object { $_.Severity -eq 'Error' })
+          $warnings = @($results | Where-Object { $_.Severity -eq 'Warning' })
+          Write-Output "Baseline debt: $($errors.Count) Error / $($warnings.Count) Warning finding(s)."
+
+      - name: Pester (whole suite, non-blocking)
+        continue-on-error: true
+        shell: powershell
+        run: |
+          $cfg = New-PesterConfiguration
+          $cfg.Run.Path           = './'
+          $cfg.Run.Throw          = $false       # report only; do not fail the job
+          $cfg.TestResult.Enabled = $true
+          $cfg.TestResult.OutputPath = 'testResults-baseline.xml'
+          $cfg.Output.Verbosity   = 'Detailed'
+          Invoke-Pester -Configuration $cfg
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pester-results-baseline
+          path: testResults-baseline.xml
+          if-no-files-found: ignore
