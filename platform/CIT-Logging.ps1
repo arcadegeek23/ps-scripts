@@ -8,6 +8,7 @@
 # Optional dot-source contract: callers may pass -ScriptName (the documented
 # usage above). The parameter is optional, so scripts that dot-source with no
 # arguments and call Write-CITLog -ScriptName '...' per-call still work unchanged.
+[Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSReviewUnusedParameter', 'ScriptName', Justification = 'Accepted for the caller dot-source contract (callers dot-source with -ScriptName); intentionally not referenced in the helper body.')]
 param(
     [string] $ScriptName
 )

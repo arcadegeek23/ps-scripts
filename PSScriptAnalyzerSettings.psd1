@@ -27,6 +27,14 @@
         'PSReviewUnusedParameter'
     )
 
+    # These are unattended Intune / Datto remediation scripts that run
+    # non-interactively as NT AUTHORITY\SYSTEM. -WhatIf / -Confirm / ShouldProcess
+    # has no operator to prompt and does not apply, so the rule is excluded
+    # repo-wide rather than suppressed per-function.
+    ExcludeRules = @(
+        'PSUseShouldProcessForStateChangingFunctions'
+    )
+
     Rules = @{
         PSUseCompatibleSyntax = @{
             Enable         = $true

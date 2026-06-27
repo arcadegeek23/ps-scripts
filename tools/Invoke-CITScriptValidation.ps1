@@ -36,6 +36,7 @@
 .EXAMPLE
     .\tools\Invoke-CITScriptValidation.ps1 -Path .\proactive-remediations\patch-compliance\Detect-PatchCompliance-v1.ps1 -Json
 #>
+[Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSAvoidUsingWriteHost', '', Justification = 'Interactive author-facing CLI; colored console output is intentional and runs only when a developer invokes it manually.')]
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)]
