@@ -104,39 +104,42 @@ jobs:
           Add-Md ""
 
           # --- Module install / import ------------------------------------------
+          # windows-latest ships PSScriptAnalyzer and Pester preinstalled. We rely on
+          # those first and only fall back to PSGallery when a module is genuinely
+          # missing. Install/repository failures are NON-FATAL: the gate fails ONLY
+          # when Import-Module fails for a required module, so a flaky PSGallery can
+          # never block a PR when the preinstalled module imports fine.
           Add-Md "### Tooling install"
           Add-Md ""
           $toolingOk = $true
           $toolingLog = New-Object System.Collections.Generic.List[string]
-          try {
-            [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-            Install-PackageProvider -Name NuGet -Force -Scope CurrentUser -ErrorAction Stop | Out-Null
-            $toolingLog.Add("NuGet provider: OK")
-          } catch {
-            $toolingOk = $false
-            $toolingLog.Add("NuGet provider: FAILED - $($_.Exception.Message)")
-          }
-          try {
-            Set-PSRepository PSGallery -InstallationPolicy Trusted -ErrorAction Stop
-            $toolingLog.Add("PSGallery trusted: OK")
-          } catch {
-            $toolingLog.Add("PSGallery trust: FAILED - $($_.Exception.Message)")
-          }
-          try {
-            Install-Module PSScriptAnalyzer,Pester -Scope CurrentUser -Force -AllowClobber -SkipPublisherCheck -ErrorAction Stop
-            $toolingLog.Add("Install-Module PSScriptAnalyzer,Pester: OK")
-          } catch {
-            $toolingOk = $false
-            $toolingLog.Add("Install-Module FAILED - $($_.Exception.Message)")
-          }
           foreach ($mod in 'PSScriptAnalyzer','Pester') {
+            $source = 'preinstalled'
+            $available = @(Get-Module -ListAvailable -Name $mod)
+            if ($available.Count -eq 0) {
+              # Not preinstalled - attempt a best-effort install that never throws out.
+              $source = 'installed'
+              try {
+                [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+                # Register PSGallery only when absent. Set-PSRepository throws when the
+                # repository does not exist, so use Register-PSRepository -Default instead.
+                if (-not (Get-PSRepository -Name PSGallery -ErrorAction SilentlyContinue)) {
+                  Register-PSRepository -Default -ErrorAction SilentlyContinue
+                }
+                Install-Module $mod -Scope CurrentUser -Force -AllowClobber -SkipPublisherCheck -ErrorAction Stop
+              } catch {
+                # Install failure is non-fatal; the import below decides the verdict.
+                $source = 'install-skipped'
+                $toolingLog.Add("${mod}: install attempt failed (non-fatal) - $($_.Exception.Message)")
+              }
+            }
             try {
               Import-Module $mod -Force -ErrorAction Stop
               $v = (Get-Module $mod | Select-Object -First 1).Version
-              $toolingLog.Add("Import-Module ${mod}: OK (v$v)")
+              $toolingLog.Add("${mod}: import OK v$v / $source")
             } catch {
               $toolingOk = $false
-              $toolingLog.Add("Import-Module ${mod}: FAILED - $($_.Exception.Message)")
+              $toolingLog.Add("${mod}: import FAILED ($source) - $($_.Exception.Message)")
             }
           }
           Add-Md '```'
@@ -145,7 +148,7 @@ jobs:
           Add-Md ""
           if (-not $toolingOk) {
             $failed = $true
-            $reasons.Add("Tooling install/import failed (see Tooling install section).")
+            $reasons.Add("Required module import failed (see Tooling install section).")
           }
 
           # --- PSScriptAnalyzer (changed files, blocking on Error severity) -----
