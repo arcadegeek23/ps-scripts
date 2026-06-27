@@ -15,6 +15,9 @@
 #
 # Author:  Kyle Etter / Zeus
 # Created: 2026-06-21
+# Version: 2.2 - 2026-06-27 - Add SysNative re-launch guard so detection runs in
+#                             64-bit context (BitLocker event channel / cmdlets are
+#                             invisible to the 32-bit IME host)
 # Version: 2.1 - 2026-06-23 - Add $ProgressPreference, fix Get-WinEvent error handling for PS 5.1
 # Version: 2.0 - 2026-06-22 - Inlined Write-CITLog (fixes IME cache dot-source failure)
 # Intune:  Proactive Remediation - Detection
@@ -26,6 +29,29 @@ param()
 $ErrorActionPreference = 'Stop'
 $WarningPreference     = 'Continue'
 $ProgressPreference    = 'SilentlyContinue'
+
+# --- SysNative re-launch guard -------------------------------------------------
+# The Intune Management Extension hosts a 32-bit PowerShell on 64-bit Windows.
+# In that WOW64 process the BitLocker module and the BitLocker event channels are
+# redirected/unavailable, so detection can see a false state. If we are a 32-bit
+# process on a 64-bit OS, re-launch this same script via the native 64-bit
+# PowerShell under %WINDIR%\SysNative and propagate the child's exit code.
+if ([Environment]::Is64BitOperatingSystem -and -not [Environment]::Is64BitProcess) {
+    $sysNativePsh = Join-Path $env:WINDIR 'SysNative\WindowsPowerShell\v1.0\powershell.exe'
+    if (Test-Path $sysNativePsh) {
+        $childArgs = @(
+            '-NoProfile'
+            '-NonInteractive'
+            '-ExecutionPolicy', 'Bypass'
+            '-File', $PSCommandPath
+        )
+        $proc = Start-Process -FilePath $sysNativePsh -ArgumentList $childArgs -Wait -PassThru -WindowStyle Hidden
+        exit $proc.ExitCode
+    }
+    # SysNative not present (genuine 32-bit OS, or path missing) - fall through and
+    # run in-process; on a true 32-bit OS there is no redirection to escape.
+}
+# ------------------------------------------------------------------------------
 
 # Inline logging function (avoids external dot-source that fails in IME cache)
 function Write-CITLog {
@@ -56,7 +82,7 @@ function Get-CitSecureBootRegValue {
             return $null
         }
         $item = Get-ItemProperty -Path $SecureBootServicingKey -Name $Name -ErrorAction SilentlyContinue
-        if ($item -and $item.$Name -ne $null) {
+        if ($item -and $null -ne $item.$Name) {
             return $item.$Name
         }
         return $null
