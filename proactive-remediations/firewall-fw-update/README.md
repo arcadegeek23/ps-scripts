@@ -18,7 +18,7 @@ This folder intentionally does **not** follow the standard Detect/Remediate pair
 
 | Script | Activity | Purpose | Exit codes |
 |---|---|---|---|
-| `FW-Diag.ps1` | Diagnostic | Gather model, firmware, HA state, uptime JSON | 0 = healthy, 1 = upgrade needed, 2+ = error |
+| `FW-Diag.ps1` | Diagnostic | Gather model, firmware, HA state, uptime JSON | 0 = healthy, 1 = upgrade needed, 2+ = error (incl. `NO_TARGET_BASELINE` when `-TargetFirmware` is omitted) |
 | `FW-Backup.ps1` | Pre-upgrade | Save config to `\\<probe>\FWBackups\<site>\<model>_<timestamp>.cfg\|conf` | 0 = success, 2+ = error |
 | `FW-StageFirmware.ps1` | Pre-upgrade | SCP firmware image to firewall; do not install | 0 = staged, 2+ = error |
 | `FW-ApplyUpdate.ps1` | Upgrade | Install staged image and reboot; HA-aware | 0 = initiated or schedule-needed, 2+ = error |
@@ -35,10 +35,16 @@ This folder intentionally does **not** follow the standard Detect/Remediate pair
 
 ## Manual test playbook (pilot device)
 
-1. **Install Posh-SSH on the probe** if not already present.
+1. **Install Posh-SSH on the probe** machine-wide if not already present.
+
+   The Intune agent runs these scripts as `NT AUTHORITY\SYSTEM`. A module
+   installed `-Scope CurrentUser` lives in the operator profile and is
+   invisible to SYSTEM, so it must be installed `-Scope AllUsers`. The FW-*
+   scripts gate on Posh-SSH and emit `POSH_SSH_UNAVAILABLE` (exit 2) rather
+   than crashing if it is missing.
 
    ```powershell
-   Install-Module Posh-SSH -Scope CurrentUser -Force
+   Install-Module Posh-SSH -Scope AllUsers -Force
    ```
 
 2. **Diagnostic**
@@ -86,10 +92,18 @@ This folder intentionally does **not** follow the standard Detect/Remediate pair
 
 Configured in `private/credential-resolution.ps1`:
 
-1. Per-probe SSH key at `~\.cit\fw-ssh.key` or `-KeyPath`.
+1. Per-probe SSH key. Default path is `C:\ProgramData\CIT\fw-ssh.key`
+   (SYSTEM-stable; a `$env:USERPROFILE`-based path resolves to the
+   `systemprofile` directory under the Intune agent and is invisible). Override
+   the path with `-KeyPath` or the `CIT_FW_SSH_KEY` env var, and supply the SSH
+   username via `CIT_FW_SSH_USER` (defaults to `admin`) so key-file auth has a
+   user to log in as.
 2. `PIA_FW_CREDENTIAL` env var (base64 `username:password`).
 3. ITGlue API via `ITGLUE_API_TOKEN` + `ITGLUE_SUBDOMAIN` (stub in v1).
 4. Abort with `NO_CREDENTIAL_SOURCE` JSON.
+
+SSH sessions are opened with `-AcceptKey` so first-contact host-key acceptance
+does not hang under the non-interactive SYSTEM context.
 
 ## Pester tests
 

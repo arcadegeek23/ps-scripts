@@ -4,7 +4,7 @@
 # Created: 2026-06-13
 # Updated: 2026-06-13
 # Tested:  Windows 10 22H2, Windows 11 23H2
-# Intune:  Proactive Remediation — Shared helper
+# Intune:  Proactive Remediation - Shared helper
 # Notes:   Dot-sourced vendor partial. Uses Posh-SSH (New-SSHSession, Invoke-SSHCommand).
 #          Stubbed in v1 to allow Pester testing without real SSH hardware.
 #          FortiOS CLI commands are execute-only and read-only as appropriate.
@@ -44,23 +44,39 @@ function Get-CitFortinetVersion {
     $version = Invoke-SSHCommand -SSHSession $SshSession -Command 'get system status' -ErrorAction Stop
     $ha      = Invoke-SSHCommand -SSHSession $SshSession -Command 'get system ha status' -ErrorAction SilentlyContinue
 
-    $model    = 'FGT-STUB-60F'
-    $firmware = 'v7.4.3-build2571 (GA)'
-    $uptime   = 42
+    # Posh-SSH .Output is a STRING ARRAY; -match against the array does not
+    # populate $matches usefully, so $matches[1] returns stale/garbage. Join to
+    # a single string before matching. Init parsed vars to $null and set ParseOk
+    # only on a real read - do not return fabricated firmware/uptime as telemetry.
+    $versionText = ($version.Output -join "`n")
+    $haText      = if ($ha) { ($ha.Output -join "`n") } else { '' }
 
-    foreach ($line in $version.Output) {
-        if ($line -match 'Version:\s*(.+)') { $firmware = $matches[1].Trim() }
-        if ($line -match 'Model name:\s*(.+)') { $model = $matches[1].Trim() }
+    $model     = $null
+    $firmware  = $null
+    $uptime    = $null
+    $parseOk   = $true
+    $parseErr  = $null
+
+    if ($versionText -match 'Version:\s*(.+)') { $firmware = $matches[1].Trim() }
+    if ($versionText -match 'Model name:\s*(.+)') { $model = $matches[1].Trim() }
+    # FortiOS "get system status" reports uptime; tolerate days field when present.
+    if ($versionText -match 'System time:.*up\s+(\d+)\s+day') { $uptime = [int]$matches[1] }
+
+    if (-not $firmware) {
+        $parseOk  = $false
+        $parseErr = 'Could not parse Version from Fortinet "get system status" output.'
     }
 
-    $haState  = 'standalone'
-    $haRole   = 'master'
+    $haState  = $null
+    $haRole   = $null
     $haPeerUp = $false
 
-    if ($ha -and $ha.Output -match 'Mode:\s*(.+)') {
+    if ($haText -match 'Mode:\s*(.+)') {
         $haState = $matches[1].Trim()
-        $haPeerUp = ($ha.Output -match 'Slave.*online')
-        $haRole = if ($ha.Output -match 'Master') { 'master' } else { 'slave' }
+        $haPeerUp = ($haText -match 'Slave.*online')
+        if ($haText -match 'Master') { $haRole = 'master' } else { $haRole = 'slave' }
+    } else {
+        $haState = 'standalone'
     }
 
     return [PSCustomObject]@{
@@ -71,6 +87,8 @@ function Get-CitFortinetVersion {
         HAState       = $haState
         HARole        = $haRole
         HAPeerPresent = $haPeerUp
+        ParseOk       = $parseOk
+        ParseError    = $parseErr
         RawVersion    = $version.Output
         RawHA         = if ($ha) { $ha.Output } else { $null }
     }
@@ -91,21 +109,38 @@ function Backup-CitFortinetConfig {
 
     $result = Invoke-SSHCommand -SSHSession $SshSession -Command 'execute backup config tftp dummy-placeholder' -ErrorAction Stop
 
+    # Gate Success on the remote ExitStatus (0 = ok) and only flip to true after
+    # the config is actually written to disk. Do not report a backup that the
+    # firewall refused or returned empty.
     $backup = [PSCustomObject]@{
         Vendor       = 'Fortinet'
-        Success      = $true
+        Success      = $false
         FilePath     = $fullPath
         FileName     = $fileName
         TimestampUtc = (Get-Date).ToUniversalTime().ToString('o')
         RawOutput    = $result.Output
+        BackupError  = $null
+    }
+
+    $exitStatus = $result.ExitStatus
+    if ($null -ne $exitStatus -and $exitStatus -ne 0) {
+        $backup.BackupError = "Fortinet 'execute backup config' returned non-zero ExitStatus $exitStatus."
+        Write-CITLog -Message $backup.BackupError -Level ERROR -ScriptName 'FW-Vendor-Fortinet'
+        return $backup
+    }
+
+    if (-not $result.Output) {
+        $backup.BackupError = "Fortinet 'execute backup config' returned no output; nothing to back up."
+        Write-CITLog -Message $backup.BackupError -Level ERROR -ScriptName 'FW-Vendor-Fortinet'
+        return $backup
     }
 
     try {
         New-Item -ItemType Directory -Path $DestinationPath -Force | Out-Null
         Set-Content -Path $fullPath -Value ($result.Output -join "`r`n") -Encoding UTF8 -Force
+        $backup.Success = $true
     } catch {
-        $backup.Success = $false
-        $backup | Add-Member -MemberType NoteProperty -Name 'BackupError' -Value $_.Exception.Message
+        $backup.BackupError = $_.Exception.Message
         Write-CITLog -Message "Failed to write Fortinet backup to disk: $($_.Exception.Message)" -Level ERROR -ScriptName 'FW-Vendor-Fortinet'
     }
 
@@ -113,7 +148,7 @@ function Backup-CitFortinetConfig {
 }
 
 
-function Stage-CitFortinetFirmware {
+function Save-CitFortinetFirmware {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)] $SshSession,
@@ -135,16 +170,27 @@ function Stage-CitFortinetFirmware {
     $fileName = Split-Path $ImagePath -Leaf
     $result   = Invoke-SSHCommand -SSHSession $SshSession -Command "execute upload image $fileName" -ErrorAction Stop
 
+    # Gate Staged on the remote ExitStatus rather than assuming success.
+    $staged     = $true
+    $stageError = $null
+    $exitStatus = $result.ExitStatus
+    if ($null -ne $exitStatus -and $exitStatus -ne 0) {
+        $staged     = $false
+        $stageError = "Fortinet 'execute upload image' returned non-zero ExitStatus $exitStatus."
+        Write-CITLog -Message $stageError -Level ERROR -ScriptName 'FW-Vendor-Fortinet'
+    }
+
     return [PSCustomObject]@{
         Vendor    = 'Fortinet'
-        Staged    = $true
+        Staged    = $staged
+        Error     = $stageError
         ImagePath = $ImagePath
         FileName  = $fileName
         RawOutput = $result.Output
     }
 }
 
-function Failover-CitFortinetActive {
+function Switch-CitFortinetActive {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)] $SshSession
@@ -161,7 +207,7 @@ function Failover-CitFortinetActive {
     }
 }
 
-function Apply-CitFortinetUpdate {
+function Install-CitFortinetUpdate {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)] $SshSession,
@@ -172,10 +218,22 @@ function Apply-CitFortinetUpdate {
 
     $result = Invoke-SSHCommand -SSHSession $SshSession -Command 'execute update-now' -ErrorAction Stop
 
+    # Gate Applied/RebootInit on the remote ExitStatus; a false success would let
+    # the workflow verify and auto-resolve a firewall that never upgraded.
+    $applied    = $true
+    $applyError = $null
+    $exitStatus = $result.ExitStatus
+    if ($null -ne $exitStatus -and $exitStatus -ne 0) {
+        $applied    = $false
+        $applyError = "Fortinet 'execute update-now' returned non-zero ExitStatus $exitStatus."
+        Write-CITLog -Message $applyError -Level ERROR -ScriptName 'FW-Vendor-Fortinet'
+    }
+
     return [PSCustomObject]@{
         Vendor     = 'Fortinet'
-        Applied    = $true
-        RebootInit = $true
+        Applied    = $applied
+        RebootInit = $applied
+        Error      = $applyError
         ImagePath  = $ImagePath
         RawOutput  = $result.Output
     }

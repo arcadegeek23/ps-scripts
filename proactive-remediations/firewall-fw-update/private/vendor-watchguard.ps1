@@ -4,7 +4,7 @@
 # Created: 2026-06-13
 # Updated: 2026-06-13
 # Tested:  Windows 10 22H2, Windows 11 23H2
-# Intune:  Proactive Remediation — Shared helper
+# Intune:  Proactive Remediation - Shared helper
 # Notes:   Phase 2. WatchGuard does not expose a convenient SSH firmware upgrade
 #          path; the intended implementation uses HTTPS REST against
 #          https://<fw>:8080 with an API key. Do not dot-source this file in

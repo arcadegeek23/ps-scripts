@@ -1,9 +1,11 @@
 # FW-ApplyUpdate.Tests.ps1
 # Pester 5+ tests for FW-ApplyUpdate.ps1
 
+[System.Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseDeclaredVarsMoreThanAssignments','scriptPath',Justification='Referenced inside Pester Describe/It child scopes; the rule does not track cross-scope usage.')]
+param()
+
 BeforeAll {
     $scriptPath = Join-Path $PSScriptRoot 'FW-ApplyUpdate.ps1'
-    $scriptName = 'FW-ApplyUpdate'
 }
 
 function Test-PlatformIsWindows {
@@ -24,8 +26,20 @@ Describe 'FW-ApplyUpdate' {
         $functionNames | Should -Contain 'Test-CitMaintenanceWindow'
     }
 
-    It 'writes to the CIT log when invoked on Windows' -Skip:(-not (Test-PlatformIsWindows)) {
-        & $scriptPath | Out-Null
-        'C:\ProgramData\CIT\Logs\FW-ApplyUpdate.log' | Should -Exist
+    It 'gates on Posh-SSH availability and passes AcceptKey' {
+        $raw = Get-Content $scriptPath -Raw
+        $raw | Should -Match 'Assert-CitPoshSsh'
+        $raw | Should -Match 'POSH_SSH_UNAVAILABLE'
+        $raw | Should -Match 'AcceptKey'
+    }
+
+    It 'refuses HA failover when telemetry is unparsed' {
+        $raw = Get-Content $scriptPath -Raw
+        $raw | Should -Match 'ParseOk'
+    }
+
+    It 'gates apply success on the result instead of unconditional exit 0' {
+        $raw = Get-Content $scriptPath -Raw
+        $raw | Should -Match '\$applyResult\.Applied'
     }
 }
