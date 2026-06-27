@@ -158,7 +158,14 @@ jobs:
             Add-Md "_Skipped: tooling did not install._"
           } else {
             try {
-              $psa = @(Invoke-ScriptAnalyzer -Path $psaFiles -Settings ./PSScriptAnalyzerSettings.psd1 -ErrorAction Stop)
+              # Invoke-ScriptAnalyzer -Path takes a single string, not an array,
+              # so analyze one changed file per call and aggregate the results.
+              $psa = @()
+              foreach ($pf in $psaFiles) {
+                if ([string]::IsNullOrWhiteSpace($pf)) { continue }
+                $psa += Invoke-ScriptAnalyzer -Path $pf -Settings ./PSScriptAnalyzerSettings.psd1 -ErrorAction Continue
+              }
+              $psa = @($psa)
               if ($psa.Count -eq 0) {
                 Add-Md "_No findings._"
               } else {
