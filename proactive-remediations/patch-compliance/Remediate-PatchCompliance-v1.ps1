@@ -74,6 +74,58 @@ function Get-CitOsBuildNumber {
     }
 }
 
+function Test-CitIsDefinitionUpdate {
+    # Returns $true when an update-history title looks like a Defender /
+    # antivirus / Security Intelligence definition update. These ship daily
+    # and must be excluded when computing quality-update freshness.
+    param([string]$Title)
+    if ([string]::IsNullOrWhiteSpace($Title)) { return $false }
+    return ($Title -match 'Defender' -or
+            $Title -match 'Antivirus' -or
+            $Title -match 'Anti-virus' -or
+            $Title -match 'Security Intelligence' -or
+            $Title -match 'Definition Update')
+}
+
+function Get-CitLastQualityUpdateDate {
+    # Mirror of the Detect-side logic: query a deep slice of WU history and
+    # FILTER OUT Defender / definition updates so freshness reflects the most
+    # recent genuine cumulative / security / quality update, not the daily
+    # Defender definition. Falls back to registry LastSuccessTime.
+    try {
+        $session = New-Object -ComObject Microsoft.Update.Session -ErrorAction Stop
+        $searcher = $session.CreateUpdateSearcher()
+
+        $totalCount = 0
+        try { $totalCount = [int]$searcher.GetTotalHistoryCount() } catch { $totalCount = 0 }
+        if ($totalCount -le 0) { $totalCount = 200 }
+        $fetch = [Math]::Min($totalCount, 200)
+
+        $history = $searcher.QueryHistory(0, $fetch)
+        if ($history -and $history.Count -gt 0) {
+            for ($i = 0; $i -lt $history.Count; $i++) {
+                $entry = $history.Item($i)
+                if ($entry.Operation -ne 1) { continue }
+                if ($entry.ResultCode -ne 2 -and $entry.ResultCode -ne 3) { continue }
+                if (Test-CitIsDefinitionUpdate -Title $entry.Title) { continue }
+                return $entry.Date
+            }
+        }
+    } catch {
+        # Fallback to registry
+        try {
+            $regPath = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update\Results\Install'
+            if (Test-Path $regPath) {
+                $lastRun = (Get-ItemProperty -Path $regPath -Name 'LastSuccessTime' -ErrorAction SilentlyContinue).LastSuccessTime
+                if ($lastRun) {
+                    return [datetime]::Parse($lastRun)
+                }
+            }
+        } catch { }
+    }
+    return $null
+}
+
 function Stop-CitWuauserv {
     try {
         if ((Get-Service -Name 'wuauserv' -ErrorAction SilentlyContinue).Status -eq 'Running') {
@@ -137,8 +189,8 @@ function Invoke-CitQualityUpdateRemediation {
     # Full WU reset: clear cache, restart service, trigger scan/download/install
     Write-CITLog -Message 'Starting quality update remediation (WU cache reset + scan/download/install)' -Level INFO -ScriptName 'Remediate-PatchCompliance'
 
-    $stopped = Stop-CitWuauserv
-    $cache   = Remove-CitWUDownloadCache
+    Stop-CitWuauserv | Out-Null
+    Remove-CitWUDownloadCache | Out-Null
     $started = Start-CitWuauserv
 
     if (-not $started) {
@@ -230,27 +282,8 @@ try {
         $needsFeatureUpdate = $true
     }
 
-    # Check quality update freshness
-    $lastUpdateDate = $null
-    try {
-        $session = New-Object -ComObject Microsoft.Update.Session -ErrorAction Stop
-        $searcher = $session.CreateUpdateSearcher()
-        $history = $searcher.QueryHistory(0, 1)
-        if ($history -and $history.Count -gt 0) {
-            $lastUpdateDate = $history.Item(0).Date
-        }
-    } catch {
-        # Fallback to registry
-        try {
-            $regPath = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update\Results\Install'
-            if (Test-Path $regPath) {
-                $lastRun = (Get-ItemProperty -Path $regPath -Name 'LastSuccessTime' -ErrorAction SilentlyContinue).LastSuccessTime
-                if ($lastRun) {
-                    $lastUpdateDate = [datetime]::Parse($lastRun)
-                }
-            }
-        } catch { }
-    }
+    # Check quality update freshness (filters out daily Defender definitions)
+    $lastUpdateDate = Get-CitLastQualityUpdateDate
 
     $daysSinceUpdate = -1
     if ($lastUpdateDate) {

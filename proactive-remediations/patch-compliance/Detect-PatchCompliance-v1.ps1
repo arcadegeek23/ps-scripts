@@ -93,18 +93,54 @@ function Get-CitOsBuildFull {
     }
 }
 
+function Test-CitIsDefinitionUpdate {
+    # Returns $true when an update-history title looks like a Defender /
+    # antivirus / Security Intelligence definition update. These ship daily,
+    # so keying freshness off them lets months-behind devices look current.
+    param([string]$Title)
+    if ([string]::IsNullOrWhiteSpace($Title)) { return $false }
+    return ($Title -match 'Defender' -or
+            $Title -match 'Antivirus' -or
+            $Title -match 'Anti-virus' -or
+            $Title -match 'Security Intelligence' -or
+            $Title -match 'Definition Update')
+}
+
 function Get-CitLastQualityUpdateDate {
-    # Check the last successful install date via the WUAUSLR API
-    # Falls back to registry if the COM object is unavailable
+    # Check the last successful install date via the Windows Update Agent COM
+    # API. Falls back to registry, then Get-HotFix, if COM is unavailable.
+    #
+    # IMPORTANT: query a deep slice of history (not just the newest one row) and
+    # FILTER OUT Defender / definition updates, which install daily. The
+    # newest single history row is almost always a Defender definition,
+    # so taking it makes the staleness gate never fire. We compute freshness
+    # from the most recent genuine cumulative / security / quality update.
     try {
         $session = New-Object -ComObject Microsoft.Update.Session -ErrorAction Stop
         $searcher = $session.CreateUpdateSearcher()
-        $history = $searcher.QueryHistory(0, 1)
+
+        $totalCount = 0
+        try { $totalCount = [int]$searcher.GetTotalHistoryCount() } catch { $totalCount = 0 }
+        if ($totalCount -le 0) { $totalCount = 200 }
+        $fetch = [Math]::Min($totalCount, 200)
+
+        $history = $searcher.QueryHistory(0, $fetch)
         if ($history -and $history.Count -gt 0) {
-            return $history.Item(0).Date
+            for ($i = 0; $i -lt $history.Count; $i++) {
+                $entry = $history.Item($i)
+                # ResultCode 2 = Succeeded; 3 = Succeeded with errors. Only
+                # count installs that actually applied (Operation 1 = Install).
+                if ($entry.Operation -ne 1) { continue }
+                if ($entry.ResultCode -ne 2 -and $entry.ResultCode -ne 3) { continue }
+                if (Test-CitIsDefinitionUpdate -Title $entry.Title) { continue }
+                # History is returned newest-first, so the first qualifying
+                # row is the most recent genuine quality update.
+                return $entry.Date
+            }
+            Write-CITLog -Message 'No genuine quality update found in WU history (only definition updates) - falling back' -Level WARN -ScriptName 'Detect-PatchCompliance'
         }
     } catch {
-        Write-CITLog -Message "WUAUSLR COM query failed, trying registry: $($_.Exception.Message)" -Level WARN -ScriptName 'Detect-PatchCompliance'
+        Write-CITLog -Message "WUA COM query failed, trying registry: $($_.Exception.Message)" -Level WARN -ScriptName 'Detect-PatchCompliance'
     }
 
     # Fallback: check registry for last successful update install time
@@ -134,10 +170,31 @@ function Get-CitLastQualityUpdateDate {
 }
 
 function Test-CitPendingReboot {
+    # Combine the three standard pending-reboot signals:
+    #   1. Component Based Servicing RebootPending key (presence = pending)
+    #   2. Windows Update Auto Update RebootRequired key (presence = pending)
+    #   3. PendingFileRenameOperations - this is a VALUE under the Session
+    #      Manager key, not a key. Test-Path on it is always false; we must
+    #      read the value and check it is non-empty.
     try {
-        return (Test-Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing\RebootPending') -or
-               (Test-Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update\RebootRequired') -or
-               (Test-Path 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\PendingFileRenameOperations')
+        if (Test-Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing\RebootPending') {
+            return $true
+        }
+        if (Test-Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update\RebootRequired') {
+            return $true
+        }
+
+        $sessionMgr = 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager'
+        $pfro = (Get-ItemProperty -Path $sessionMgr -Name 'PendingFileRenameOperations' -ErrorAction SilentlyContinue).PendingFileRenameOperations
+        if ($pfro) {
+            # REG_MULTI_SZ comes back as a string array; any non-empty entry
+            # means a file rename is queued for the next boot.
+            foreach ($item in $pfro) {
+                if (-not [string]::IsNullOrEmpty($item)) { return $true }
+            }
+        }
+
+        return $false
     } catch {
         return $false
     }
