@@ -1,0 +1,436 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>citmn/ps-scripts — QA Assessment &amp; Plan</title>
+<style>
+:root{
+  --cit-navy:#13314f; --cit-blue:#1f5f8b; --cit-accent:#0e7c86;
+  --ink:#1b2430; --muted:#5a6a7a; --line:#e2e8f0; --bg:#f4f6f9;
+  --card:#ffffff; --crit:#b3261e; --high:#c2410c; --med:#a16207; --low:#15803d;
+  --code-bg:#0f2231; --code-ink:#e6edf3;
+}
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--bg);color:var(--ink);
+  font:16px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;}
+.wrap{max-width:1040px;margin:0 auto;padding:0 20px 80px}
+header.report{background:linear-gradient(135deg,var(--cit-navy),var(--cit-blue));
+  color:#fff;padding:38px 0 30px;margin-bottom:32px;
+  box-shadow:0 2px 12px rgba(19,49,79,.18)}
+header.report .wrap{padding-bottom:0}
+.brand{font-size:13px;letter-spacing:.14em;text-transform:uppercase;opacity:.82;font-weight:600}
+h1.title{font-size:30px;line-height:1.2;margin:8px 0 6px;font-weight:700}
+.subtitle{opacity:.9;font-size:15px;margin-bottom:22px}
+.stats{display:flex;flex-wrap:wrap;gap:14px;margin-top:8px}
+.stat{background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.22);
+  border-radius:10px;padding:12px 18px;min-width:140px;backdrop-filter:blur(2px)}
+.stat .n{font-size:26px;font-weight:700;line-height:1}
+.stat .l{font-size:12.5px;opacity:.9;margin-top:4px;letter-spacing:.02em}
+.toc{background:var(--card);border:1px solid var(--line);border-radius:12px;
+  padding:16px 22px;margin-bottom:30px;box-shadow:0 1px 3px rgba(0,0,0,.04)}
+.toc strong{display:block;font-size:12px;text-transform:uppercase;letter-spacing:.1em;
+  color:var(--muted);margin-bottom:8px}
+.toc a{color:var(--cit-blue);text-decoration:none;font-weight:600;margin-right:18px}
+.toc a:hover{text-decoration:underline}
+section.card{background:var(--card);border:1px solid var(--line);border-radius:14px;
+  padding:6px 30px 26px;margin-bottom:30px;box-shadow:0 1px 4px rgba(15,35,55,.05)}
+.section-tag{display:inline-block;background:var(--cit-accent);color:#fff;font-size:11.5px;
+  font-weight:700;letter-spacing:.08em;text-transform:uppercase;padding:5px 12px;
+  border-radius:0 0 8px 8px;margin-bottom:6px}
+h1{font-size:24px;color:var(--cit-navy);border-bottom:2px solid var(--line);
+  padding-bottom:8px;margin:22px 0 14px}
+h2{font-size:20px;color:var(--cit-navy);margin:30px 0 10px;
+  border-left:4px solid var(--cit-accent);padding-left:12px}
+h3{font-size:16.5px;color:var(--cit-blue);margin:22px 0 8px}
+h4{font-size:15px;color:var(--ink);margin:18px 0 6px}
+p{margin:10px 0}
+ul,ol{margin:10px 0 10px 4px;padding-left:24px}
+li{margin:5px 0}
+a{color:var(--cit-blue)}
+hr{border:none;border-top:1px solid var(--line);margin:24px 0}
+code{background:#eef2f6;color:#0b3a52;padding:1.5px 6px;border-radius:5px;
+  font:13px/1.5 "SFMono-Regular",Consolas,"Liberation Mono",Menlo,monospace;
+  word-break:break-word}
+pre.code{background:var(--code-bg);color:var(--code-ink);border-radius:10px;
+  padding:16px 18px;overflow-x:auto;margin:14px 0;position:relative;
+  border:1px solid #1d3a4f}
+pre.code code{background:none;color:inherit;padding:0;font-size:13px;line-height:1.55;
+  white-space:pre;display:block}
+pre.code[data-lang]:before{content:attr(data-lang);position:absolute;top:0;right:0;
+  background:#1d3a4f;color:#9fb6c6;font-size:10.5px;letter-spacing:.08em;
+  text-transform:uppercase;padding:3px 9px;border-radius:0 10px 0 8px}
+.table-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch;margin:14px 0;
+  border:1px solid var(--line);border-radius:10px}
+table{border-collapse:collapse;width:100%;font-size:13.5px;min-width:520px}
+thead th{background:var(--cit-navy);color:#fff;text-align:left;padding:9px 12px;
+  font-weight:600;white-space:nowrap;position:sticky;top:0}
+tbody td{padding:9px 12px;border-top:1px solid var(--line);vertical-align:top}
+tbody tr:nth-child(even){background:#f7fafc}
+tbody td code{font-size:12px}
+strong{color:#0d2233}
+footer.report{text-align:center;color:var(--muted);font-size:13px;margin-top:36px}
+@media (max-width:640px){
+  h1.title{font-size:23px}
+  section.card{padding:4px 16px 20px}
+  .stat{min-width:calc(50% - 7px);flex:1}
+  table{font-size:12.5px}
+}
+</style>
+</head>
+<body>
+<header class="report">
+  <div class="wrap">
+    <div class="brand">CIT Solutions &middot; QA Review</div>
+    <h1 class="title">citmn/ps-scripts — QA Assessment &amp; Plan</h1>
+    <div class="subtitle">Prepared for Kyle Etter &middot; PowerShell PIA / Intune bundle &middot; 2026-06-27</div>
+    <div class="stats">
+      <div class="stat"><div class="n">21</div><div class="l">Scripts reviewed</div></div>
+      <div class="stat"><div class="n">47</div><div class="l">Confirmed high / critical findings</div></div>
+      <div class="stat"><div class="n">2</div><div class="l">Critical deploy-killers</div></div>
+      <div class="stat"><div class="n">3-layer</div><div class="l">Proposed QA gate</div></div>
+    </div>
+  </div>
+</header>
+
+<div class="wrap">
+  <nav class="toc">
+    <strong>Contents</strong>
+    <a href="#assessment">1. Assessment</a>
+    <a href="#qaplan">2. QA Process &amp; Validation Skill</a>
+  </nav>
+
+  <section class="card" id="assessment">
+    <span class="section-tag">Section 1 — Assessment</span>
+    <h1>QA Assessment — citmn/ps-scripts (PowerShell PIA/Intune Bundle)</h1>
+<p>Prepared for: Kyle Etter, CIT Solutions · Date: 2026-06-27 · Scope: 18 reviewed scripts (firewall-fw-update, patch-compliance, patch-remediation, secure-boot-cert, bitlocker-reseal, shared platform)</p>
+<hr/>
+<h2>1. Verdict</h2>
+<p>The repo is well-structured and disciplined on the surface — clean ASCII source, consistent logging convention, no hardcoded secrets, sensible exit-code intentions — but it is <strong>not deploy-ready</strong>, and the symptom Kyle reports ("works locally, fails when deployed") is real and root-caused. The single biggest reason scripts fail on deploy is that <strong>they have never run in their actual target runtime (NT AUTHORITY\SYSTEM, non-interactive, 32-bit Intune host, with dependencies installed CurrentUser)</strong>, so an entire class of context bugs ships untested: the shared logging helper crashes its own callers via an argument it doesn't accept, SSH/BitLocker dependencies are invisible to SYSTEM, and <code>$env:USERPROFILE</code>-based paths point at the system profile. The second systemic theme is <strong>false success</strong> — multiple remediations swallow every sub-step failure and emit <code>Status=COMPLETE</code> / exit 0, so genuinely broken devices auto-resolve their own tickets.</p>
+<hr/>
+<h2>2. Top failure patterns (recurring root causes)</h2>
+<div class="table-wrap"><table>
+<thead><tr><th>#</th><th>Pattern</th><th>Scripts affected</th><th>One-line example</th></tr></thead>
+<tbody><tr><td>1</td><td><strong><code>-ScriptName</code> passed to a param-less helper → hard crash before try/catch</strong></td><td>4 (CIT-Logging callers)</td><td><code>FW-ApplyUpdate.ps1:27</code> dot-sources <code>CIT-Logging.ps1</code> with <code>-ScriptName</code>, but the helper has no <code>param()</code> → terminating <code>ParameterBindingException</code>, exit 1, no JSON. Also <code>CIT-PIA-WUDiag.ps1:17</code>. Root defect in <code>platform/CIT-Logging.ps1</code> (header documents a param it never implements).</td></tr><tr><td>2</td><td><strong>SYSTEM-context dependency invisibility (Posh-SSH / BitLocker module installed CurrentUser or 32-bit-redirected)</strong></td><td>8 (all FW-*, both vendor partials, BitLocker remediate)</td><td><code>FW-Backup.ps1:54</code> calls <code>New-SSHSession</code> with no <code>Import-Module</code>/availability gate; README installs Posh-SSH <code>-Scope CurrentUser</code> (invisible to SYSTEM). <code>Remediate-BitLockerReseal-v2.ps1:86</code> needs the BitLocker module unavailable to the 32-bit IME host with no SysNative re-launch.</td></tr><tr><td>3</td><td><strong><code>$env:USERPROFILE</code> resolves to <code>systemprofile</code> under SYSTEM → primary credential path silently dead</strong></td><td>5 (all FW-* via shared resolver)</td><td><code>private/credential-resolution.ps1:25</code> builds <code>Join-Path $env:USERPROFILE '.cit\fw-ssh.key'</code>; operator's key is never found, falls through to <code>NO_CREDENTIAL_SOURCE</code>.</td></tr><tr><td>4</td><td><strong>False success / error swallowing — partial or total failure still emits success token + exit 0</strong></td><td>7</td><td><code>CIT-PIA-WUFix-Generic.ps1:95-99</code> emits <code>{"Status":"COMPLETE"}</code> even when cache-clear and every UsoClient call fail. <code>vendor-fortinet.ps1:96</code> sets <code>Success=$true</code> unconditionally; <code>Remediate-PatchCompliance-v1.ps1:155</code> returns <code>$true</code> for a bare <code>Start-Process</code> launch.</td></tr><tr><td>5</td><td><strong>UsoClient verbs are deprecated/no-op on the targeted Win10 22H2 / Win11 23H2-24H2 builds, and don't work in session 0</strong></td><td>3 (patch-remediation)</td><td><code>CIT-PIA-WUFix-Generic.ps1:60-74</code> shells <code>UsoClient StartScan/StartDownload/StartInstall</code> — no-op on supported OSes; core remediation does nothing while reporting COMPLETE.</td></tr><tr><td>6</td><td><strong><code>-match</code> against the Posh-SSH <code>.Output</code> string array doesn't populate <code>$matches</code> → stale/garbage parsed values</strong></td><td>2 (both vendor partials)</td><td><code>vendor-sonicwall.ps1:61</code> reads <code>$matches[1]</code> after array <code>-match</code>, feeding garbage <code>HARole</code> into <code>FW-ApplyUpdate.ps1:88</code> failover decision (outage risk).</td></tr><tr><td>7</td><td><strong>WU "freshness" keys off <code>QueryHistory(0,1)</code> → newest row is a daily Defender definition update, not a cumulative update</strong></td><td>2 (patch-compliance Detect + Remediate)</td><td><code>Detect-PatchCompliance-v1.ps1:99-108</code>: 14-day staleness gate effectively never fires → months-behind devices reported compliant.</td></tr><tr><td>8</td><td><strong>No <code>-AcceptKey</code> / known-hosts handling → first-contact SSH hangs or fails under non-interactive SYSTEM</strong></td><td>4 (FW-Backup/Diag/Stage/Verify)</td><td><code>FW-Verify.ps1:49-53</code> builds <code>sessionParams</code> with no <code>-AcceptKey</code>.</td></tr><tr><td>9</td><td><strong>Hardcoded stub telemetry baked into the parsed return contract (not just the test layer)</strong></td><td>3</td><td><code>vendor-fortinet.ps1:49</code> hardcodes <code>UptimeDays=42</code> → <code>FW-Verify.ps1:71</code> <code>($diag.UptimeDays -lt 1)</code> can never be true → every real upgrade returns RECOVERY_NEEDED. SonicWall stub firmware string == README's example <code>TargetFirmware</code>.</td></tr><tr><td>10</td><td><strong>PendingFileRenameOperations checked with <code>Test-Path</code> (value treated as key) → always <code>$false</code></strong></td><td>2</td><td><code>Detect-PatchCompliance-v1.ps1:140</code> and <code>CIT-PIA-WUDiag.ps1:29-37</code> miss the most common pending-reboot signal.</td></tr><tr><td>11</td><td><strong>Non-ASCII em-dash in BOM-less UTF-8 source → signing/5.1 re-encode fragility</strong></td><td>7 (all FW-* + vendor partials)</td><td><code>FW-Diag.ps1:7</code> <code>— Diagnostic</code> (U+2014). Cosmetic today; breaks signature if re-encoded post-sign.</td></tr></tbody></table></div>
+<hr/>
+<h2>3. Critical/high issues by script</h2>
+<div class="table-wrap"><table>
+<thead><tr><th>Script</th><th>Risk</th><th>Deploy-breaking issue(s)</th><th>Fix</th></tr></thead>
+<tbody><tr><td><code>platform/CIT-Logging.ps1</code></td><td>high</td><td>Unguarded <code>Add-Content</code> (line 23) throws under callers' <code>$ErrorActionPreference='Stop'</code> on a transient log lock → turns success into exit 2, or escapes the catch block entirely</td><td>Wrap the write in retry/try-catch that returns silently; never throw to caller</td></tr><tr><td><code>FW-ApplyUpdate.ps1</code></td><td><strong>critical</strong></td><td><code>-ScriptName</code> on line 27 dot-source crashes every run before the try block (exit 1, no JSON)</td><td>Add <code>param([string]$ScriptName)</code> to CIT-Logging or drop the arg; test by dot-sourcing as prod does</td></tr><tr><td><code>FW-Backup.ps1</code></td><td>high</td><td>Posh-SSH never imported/verified (<code>:54</code>); <code>$env:USERPROFILE</code> key path dead under SYSTEM (<code>cred-res:25</code>); no <code>-AcceptKey</code> hang (<code>:43-54</code>)</td><td>Gate <code>Get-Module -ListAvailable Posh-SSH</code> + install AllUsers; use <code>C:\ProgramData\CIT\fw-ssh.key</code>; add <code>AcceptKey=$true</code></td></tr><tr><td><code>FW-Diag.ps1</code></td><td>high</td><td>Same Posh-SSH/USERPROFILE/AcceptKey trio; <strong>empty <code>-TargetFirmware</code> (default) → every firewall reports healthy/exit 0</strong> (<code>:16,71</code>)</td><td>Emit <code>NO_TARGET_BASELINE</code>/exit 2 when target omitted; never let "no target" mean healthy</td></tr><tr><td><code>FW-StageFirmware.ps1</code></td><td>high</td><td>Posh-SSH gate, AcceptKey, USERPROFILE; stub <code>Stage-*</code> returns <code>Staged=$true</code> unconditionally → false-staged firmware applied later</td><td>Same SYSTEM fixes; gate <code>Staged</code> on real <code>$result.ExitStatus</code>/output</td></tr><tr><td><code>FW-Verify.ps1</code></td><td>high</td><td>Posh-SSH gate; <strong><code>UptimeDays=42</code> stub makes VERIFY_OK unreachable → every upgrade escalates to Tier 2</strong> (<code>vendor:49</code>,<code>:71</code>); <code>-KeyFile</code> with no <code>-Credential</code>/username</td><td>Implement real version/uptime parse; supply username + <code>-AcceptKey</code></td></tr><tr><td><code>vendor-sonicwall.ps1</code> / <code>vendor-fortinet.ps1</code></td><td>high</td><td><code>$matches</code> stale after array <code>-match</code> → garbage HARole drives failover (<code>:60-63</code>); stub defaults returned as real telemetry → false compliant (<code>:47-49</code>); <code>Success=$true</code> unconditional on backup/stage/apply</td><td>Join output to single string before regex; init to <code>$null</code> + <code>ParseOk</code> flag; gate Success on <code>ExitStatus</code></td></tr><tr><td><code>Detect-PatchCompliance-v1.ps1</code></td><td>high</td><td><strong><code>QueryHistory(0,1)</code> = Defender update, not cumulative → stale machines pass as compliant</strong> (<code>:99-108</code>); <code>Test-Path</code> on PendingFileRenameOps always false (<code>:140</code>)</td><td>Filter history to Cumulative/Security, exclude Defender; read the reg value, don't <code>Test-Path</code> it</td></tr><tr><td><code>Remediate-PatchCompliance-v1.ps1</code></td><td>high</td><td>UsoClient launch treated as success, no verification/COM fallback (<code>:118-155</code>); same <code>QueryHistory(0,1)</code> false-compliant</td><td>Drive <code>Microsoft.Update.Session</code> COM, gate success on installer ResultCode</td></tr><tr><td><code>CIT-PIA-WUDiag.ps1</code></td><td>high</td><td><strong><code>-ScriptName</code> on line 17 crashes before try/catch → exit 1 = "remediation needed", empty stdout</strong></td><td>Drop the arg or add param block to CIT-Logging</td></tr><tr><td><code>CIT-PIA-WUFix-Components.ps1</code></td><td>high</td><td>Failed folder rename/DISM/SFC ignored — emits COMPLETE/exit 0 after partial remediation (<code>:120-139</code>)</td><td>Aggregate <code>$renamed</code>/<code>$dism</code>/<code>$sfc</code>; exit 2 + per-step booleans on any failure</td></tr><tr><td><code>CIT-PIA-WUFix-DiskClean.ps1</code></td><td>high</td><td><code>cleanmgr -Wait</code> no timeout → hangs to agent kill (<code>:26</code>); partial failure still <code>Status=COMPLETE</code>/exit 0 (<code>:71-84</code>)</td><td><code>Start-Process -PassThru</code> + <code>WaitForExit(ms)</code>/<code>Kill()</code>; per-branch booleans + before/after free-space delta</td></tr><tr><td><code>CIT-PIA-WUFix-Generic.ps1</code></td><td>high</td><td>UsoClient verbs no-op on targeted OSes / session-0 (<code>:60-74</code>); emits COMPLETE/exit 0 even when cache-clear + all steps fail (<code>:79-99</code>)</td><td>COM-based Search/Download/Install; gate token on real results</td></tr><tr><td><code>CIT-PIA-WUFix-Reboot.ps1</code></td><td>high</td><td><strong><code>Win32_ComputerSystem.UserName</code> null under SYSTEM/RDP → fail-open forces reboot on in-use machine</strong> (<code>:22-25</code>); reboot races stdout/exit before token is read (<code>:41-45</code>)</td><td>Enumerate real sessions (quser/explorer.exe owner); fail safe to user-present; emit+flush JSON then <code>shutdown /r /t 15</code></td></tr><tr><td><code>Remediate-BitLockerReseal-v2.ps1</code></td><td>medium</td><td>BitLocker module unloadable in 32-bit IME host, no SysNative guard (<code>:86,125</code>) → perpetual non-compliant loop; sentinel-write failure re-suspends every cycle, holding volume unprotected (<code>:124-144</code>)</td><td>Add 64-bit re-launch guard; write sentinel before suspend / exit 2 on sentinel-write failure</td></tr><tr><td><code>Detect-BitLockerReseal-v2.ps1</code></td><td>medium</td><td><strong>Event ID 767 in <code>System</code> log is wrong source for BitLocker recovery → false compliant</strong> (<code>:83-111</code>); remediation half broken (above)</td><td>Validate real channel <code>Microsoft-Windows-BitLocker/BitLocker Management</code> on an affected device</td></tr><tr><td><code>Remediate-SecureBootCert-v2.ps1</code></td><td>medium</td><td>Pester asserts <code>'CertificateUpdate'</code> (absent from script) → <strong>pre-deploy gate is permanently red</strong> (<code>Tests:100</code>, <code>README:44</code>); script's actual task path is correct</td><td>Fix test + README to <code>'Secure-Boot-Update'</code>; reconcile to one source of truth</td></tr><tr><td><code>Detect-SecureBootCert-v2.ps1</code></td><td>medium</td><td>Legacy-BIOS/non-UEFI devices fall through to exit 1 forever (<code>:97-152</code>) — bounded by Win11-only target group</td><td>Detect the <code>Confirm-SecureBootUEFI</code> throw / missing Servicing key → exit 0 <code>NotApplicable</code></td></tr><tr><td><code>vendor-watchguard.ps1</code></td><td>low</td><td>None — intentional, well-documented fail-closed Phase-2 stub</td><td>No action; exclude WatchGuard from PIA assignment until Phase 2</td></tr></tbody></table></div>
+<hr/>
+<h2>4. What's already good (real strengths, keep these)</h2>
+<ul>
+<li><strong>Logging convention is sound and consistent</strong>: every script logs to <code>C:\ProgramData\CIT\Logs\&lt;ScriptName&gt;.log</code>, creates the dir if missing, uses timestamped levels with <code>ValidateSet</code>. The fix-swallowing in <code>Write-CITLog</code> is the one defect; the pattern itself is right.</li>
+<li><strong>The IME-cache lesson was learned</strong>: the PIA detection/remediation scripts (BitLocker, secure-boot, patch-compliance, WUFix bundle) <strong>inline</strong> <code>Write-CITLog</code> rather than dot-sourcing — correctly avoiding the dot-source-from-cache failure. (The dot-sourcing scripts that still crash are the FW-* and WUDiag set.)</li>
+<li><strong>No secrets anywhere</strong> — credentials are resolved via SSH key / base64 env var / ITGlue stub; nothing hardcoded. Honors the repo's no-secrets rule across all 18 scripts.</li>
+<li><strong>Genuine PS 5.1 discipline</strong> — no ternary, <code>?.</code>, <code>&amp;&amp;</code>/<code>||</code>, null-coalescing, or PS7-only cmdlets in any reviewed script; <code>$ProgressPreference='SilentlyContinue'</code> set for non-interactive hosts.</li>
+<li><strong>Structured-output / exit-code intent is correct</strong> where it executes: the FW-* JSON action tokens, the Detect 0/1/2 contract, and top-level try/catch → exit 2 mapping are the right shape for PIA/HaloPSA/Datto.</li>
+<li><strong>Honest, fail-closed stubbing</strong>: WatchGuard throws and is excluded from <code>ValidateSet</code>; documented as Phase-2. This is exactly the forethought the rest of the bundle needs.</li>
+<li><strong>Detection scripts are genuinely side-effect-free and idempotent</strong> (secure-boot, patch-compliance, bitlocker detect) — verified no writes/restarts.</li>
+</ul>
+<hr/>
+<h2>5. Coverage gaps (testing &amp; enforcement)</h2>
+<ul>
+<li><strong>No script has a test that exercises the production failure modes.</strong> Where Pester exists (FW-*, WUDiag, WUFix bundle, secure-boot, bitlocker) it <strong>AST-parses the file only</strong> and never dot-sources <code>CIT-Logging.ps1</code> the way production does — which is precisely why the <code>-ScriptName</code> crash (the most deploy-fatal bug in the repo) passes CI. <code>FW-ApplyUpdate.Tests.ps1:14-31</code>, <code>FW-Diag.Tests.ps1:27-30</code>.</li>
+<li><strong>Tests that do run, run against the wrong OS.</strong> <code>FW-Diag.Tests.ps1</code> and others pass on macOS pwsh with the meaningful check skipped; <code>Detect-PatchCompliance-v1</code> was <strong>parse-checked on macOS only, never run on Windows</strong> (<code>README:106-111</code>) — so all the false-compliant WU logic bugs have never been observed.</li>
+<li><strong>The pre-deploy gate is broken on a Secure Boot change.</strong> <code>Remediate-SecureBootCert.Tests.ps1:100</code> asserts a string absent from the script, so the suite is permanently red — meaning the Invoke-Pester gate (mandated by <code>README:39-42</code>, second-reviewer rule at <code>:55</code>) is either bypassed or ignored for a BitLocker/Secure-Boot-impacting script.</li>
+<li><strong>No tests at all</strong> in the <code>bitlocker-reseal/</code> folder — only Detect, Remediate, <code>script_id.txt</code>; no <code>.deploy-notes.md</code>, so the unverified Event-ID-767 assumption and the single-fire design have nothing to validate them.</li>
+<li><strong>Integration-contract spec is wrong bundle-wide.</strong> <code>.deploy-notes.md:74</code> says Datto parses <code>Status=COMPLETE</code> key=value, but every WUFix script emits <code>ConvertTo-Json -Compress</code> JSON — no script matches the documented parser. Reconcile before building the PIA/Datto workflow.</li>
+<li><strong>Config drift risk</strong>: patch-compliance build-target table (e.g. 25H2=26200, unvalidated/forward-dated) is duplicated as literals across Detect and Remediate rather than shared — a one-file edit produces inconsistent fleet behavior.</li>
+</ul>
+<p><strong>Recommended gate before any production assignment:</strong> (1) fix the <code>CIT-Logging</code> <code>-ScriptName</code> contract and add a test that dot-sources it as prod does; (2) install Posh-SSH / verify BitLocker module <code>-Scope AllUsers</code> and add availability gates; (3) run every script under <code>PsExec -s</code> on real Win10 22H2 / Win11 23H2 / 24H2 before broad deploy; (4) replace all unconditional success tokens with aggregated per-step results.</p>
+
+  </section>
+
+  <section class="card" id="qaplan">
+    <span class="section-tag">Section 2 — QA Process &amp; Validation Skill Plan</span>
+    <h1>QA Process &amp; Validation Skill for <code>citmn/ps-scripts</code></h1>
+<p>This design is built directly against the verified failure classes in the review data. Every gate maps to at least one confirmed finding so nothing is theoretical. The recurring deploy-killers are:</p>
+<div class="table-wrap"><table>
+<thead><tr><th>Failure class</th><th>Confirmed in</th><th>A gate must catch it</th></tr></thead>
+<tbody><tr><td>Dot-source <code>-ScriptName</code> against a paramless <code>CIT-Logging.ps1</code></td><td>FW-ApplyUpdate (critical), CIT-PIA-WUDiag (critical)</td><td><strong>load-contract test</strong></td></tr><tr><td>Logging can throw to caller under <code>$ErrorActionPreference='Stop'</code></td><td>CIT-Logging</td><td><strong>fault-injection unit test</strong></td></tr><tr><td>Wrong exit-code semantics (crash → exit 1 read as "non-compliant")</td><td>WUDiag, WUFix-Generic</td><td><strong>exit-code contract harness</strong></td></tr><tr><td>False success: <code>Status=COMPLETE</code>/<code>exit 0</code> after a failed action</td><td>WUFix-Components/DiskClean/Generic, FW-Backup, vendor partials</td><td><strong>outcome-aggregation assertions</strong></td></tr><tr><td>BOM-less UTF-8 + non-ASCII em-dash (signing/encoding)</td><td>every FW-* + vendor file</td><td><strong>encoding/BOM lint</strong></td></tr><tr><td>Missing 64-bit re-launch guard for module-bound cmdlets</td><td>Remediate-BitLockerReseal</td><td><strong>SysNative-guard static check</strong></td></tr><tr><td><code>$null</code> on RHS, unapproved verbs, aliases</td><td>secure-boot-cert, vendor partials</td><td><strong>PSScriptAnalyzer</strong></td></tr><tr><td>Tests AST-parse only; never dot-source or assert behavior</td><td>all 12 existing tests</td><td><strong>coverage/behavior gate</strong></td></tr><tr><td>Pester asserts a string absent from the script (red gate ignored)</td><td>Remediate-SecureBootCert</td><td><strong>CI fails the build on red</strong></td></tr></tbody></table></div>
+<hr/>
+<h2>1. Layered QA gate: local pre-commit → CI → pre-deploy</h2>
+<p>Three layers, fastest-and-cheapest first. The same <code>PSScriptAnalyzerSettings.psd1</code> and the same harness scripts are reused in all three so a clean pre-commit predicts a clean CI.</p>
+<h3>Layer 1 — Local pre-commit (fast, no Windows required)</h3>
+<p>Runs in the author's shell (pwsh 7 on Mac/Linux works for everything except the live SYSTEM checks). Wire via <code>.git/hooks/pre-commit</code> or <code>pre-commit</code> framework calling the validation skill (§3).</p>
+<div class="table-wrap"><table>
+<thead><tr><th>Tool / check</th><th>What it enforces</th><th>Catches</th></tr></thead>
+<tbody><tr><td><code>Invoke-ScriptAnalyzer -Settings ./PSScriptAnalyzerSettings.psd1</code></td><td>Static rules, see §1.5</td><td>aliases, <code>$null</code> RHS, unapproved verbs, <code>Write-Host</code>, PS5.1 incompat</td></tr><tr><td><strong>Encoding lint</strong> (<code>Test-CITEncoding</code>)</td><td>ASCII-only OR UTF-8-with-BOM; reject BOM-less files containing bytes &gt; 0x7F; reject CRLF/LF drift via <code>.gitattributes</code></td><td>em-dash signing risk across FW-*</td></tr><tr><td><strong>Logging-convention lint</strong> (regex/AST)</td><td>every script either inlines <code>Write-CITLog</code> or dot-sources <code>CIT-Logging.ps1</code> <strong>without</strong> an unsupported <code>-ScriptName</code> arg; log path is <code>C:\ProgramData\CIT\Logs</code></td><td>the dot-source crashes</td></tr><tr><td><strong>Parse</strong> (<code>[Parser]::ParseFile</code>)</td><td>syntax (keep the existing Makefile behavior)</td><td>regressions</td></tr><tr><td><strong>Pester (matching test only)</strong></td><td><code>Invoke-Pester &lt;script&gt;.Tests.ps1</code> for the file being committed</td><td>local fast feedback</td></tr></tbody></table></div>
+<p>Hook is non-blocking-optional for WIP via <code>git commit --no-verify</code>, but CI re-runs everything so nothing slips.</p>
+<h3>Layer 2 — CI on PR (authoritative, Windows)</h3>
+<p>GitHub Actions, <code>windows-latest</code>. Runs the <strong>full</strong> analyzer + <strong>all</strong> Pester + the <strong>exit-code contract harness</strong> + the load-contract test, on a matrix of <strong>Windows PowerShell 5.1 (desktop)</strong> and <strong>pwsh 7</strong>. 5.1 is the production runtime and is the only place <code>PSUseCompatibleSyntax</code>/<code>PSUseCompatibleCommands</code> and the real <code>Microsoft.PowerShell.Security</code> signature check are meaningful. YAML in §2. <strong>The job fails the PR on any analyzer error-severity finding, any failing Pester test, any contract-harness mismatch, or any coverage gap below threshold</strong> — this is what would have stopped the permanently-red <code>CertificateUpdate</code> test from shipping.</p>
+<h3>Layer 3 — Pre-deploy gate (before PIA/Intune assignment)</h3>
+<p>Run by the deployer (manual or a <code>deploy</code> workflow_dispatch), against the signed artifact:</p>
+<div class="table-wrap"><table>
+<thead><tr><th>Check</th><th>Tool</th><th>Catches</th></tr></thead>
+<tbody><tr><td><strong>Authenticode signature valid</strong></td><td><code>Get-AuthenticodeSignature</code> → <code>Status -eq 'Valid'</code> for every <code>*.ps1</code> shipped</td><td>unsigned / encoding-broke-signature</td></tr><tr><td><strong>Signed bytes == committed bytes</strong></td><td>hash compare before/after signing</td><td>re-encode invalidation</td></tr><tr><td><strong>SYSTEM-context smoke</strong></td><td><code>PsExec -s pwsh -File Detect.ps1</code> on a CIT-ring device; assert exit code ∈ {0,1,2} and a parseable stdout token</td><td>USERPROFILE/SysNative/UsoClient-under-SYSTEM no-ops</td></tr><tr><td><strong>Idempotency</strong></td><td>run Remediate twice; assert second run is a no-op (no second reboot, no second suspend)</td><td>BitLocker re-suspend loop, reboot loop</td></tr><tr><td><strong>Contract re-confirm</strong></td><td>the §3 harness against the live exit codes</td><td>drift between local and device</td></tr></tbody></table></div>
+<h3>1.5 <code>PSScriptAnalyzerSettings.psd1</code> (tuned for Intune / SYSTEM / PS 5.1)</h3>
+<pre class="code" data-lang="powershell"><code># PSScriptAnalyzerSettings.psd1 — repo root. Used identically by pre-commit, CI, and the skill.
+@{
+    Severity = @('Error','Warning')
+
+    # Rules that map to confirmed deploy failures in this repo.
+    IncludeRules = @(
+        'PSAvoidUsingCmdletAliases',          # ? / % / gci hide intent in SYSTEM logs
+        'PSAvoidUsingPositionalParameters',
+        'PSUseApprovedVerbs',                 # Stage-/Apply-/Failover-CitSonicWall* warn-noise on stderr
+        'PSPossibleIncorrectComparisonWithNull', # $item.$Name -ne $null  (secure-boot-cert)
+        'PSUseDeclaredVarsMoreThanAssignments',  # $renamed/$dism/$sfc captured then ignored
+        'PSAvoidUsingWriteHost',              # PIA/Datto parse stdout; Write-Host bypasses the stream
+        'PSAvoidUsingInvokeExpression',
+        'PSAvoidUsingPlainTextForPassword',
+        'PSAvoidUsingConvertToSecureStringWithPlainText',
+        'PSUseCompatibleSyntax',              # see rule config below — flags PS7-only syntax for 5.1
+        'PSUseCompatibleCommands',            # flags cmdlets/params missing on 5.1 (e.g. -SkipCertificateCheck)
+        'PSUseBOMForUnicodeEncodedFile',      # backs the encoding lint
+        'PSUseShouldProcessForStateChangingFunctions',
+        'PSAvoidGlobalVars',
+        'PSReviewUnusedParameter'
+    )
+
+    Rules = @{
+        PSUseCompatibleSyntax = @{
+            Enable         = $true
+            TargetVersions = @('5.1')         # Windows PowerShell 5.1 is the prod runtime
+        }
+        PSUseCompatibleCommands = @{
+            Enable         = $true
+            # Desktop 5.1 on Win10/11. Generate profiles with New-PSScriptAnalyzerProfile if richer coverage needed.
+            TargetProfiles = @('win-8_x64_10.0.19041.0_5.1.19041.1_x64_4.0.30319.42000_framework')
+        }
+    }
+}</code></pre>
+<p>Note: <code>PSUseCompatibleSyntax</code>/<code>PSUseCompatibleCommands</code> only flag <em>executable</em> PS7-only constructs — they will not catch a BOM-less em-dash in a comment, which is why the standalone encoding lint (Layer 1) is a separate, mandatory gate.</p>
+<hr/>
+<h2>2. GitHub Actions workflow — <code>.github/workflows/qa.yml</code></h2>
+<pre class="code" data-lang="yaml"><code>name: QA
+
+on:
+  pull_request:
+    paths: ['**/*.ps1', 'PSScriptAnalyzerSettings.psd1', '.github/workflows/qa.yml']
+  push:
+    branches: [main]
+
+jobs:
+  analyze-and-test:
+    name: Analyze + Pester (${{ matrix.shell }})
+    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - shell: powershell     # Windows PowerShell 5.1 — the production runtime
+          - shell: pwsh           # PowerShell 7 — parity check
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install tooling
+        shell: ${{ matrix.shell }}
+        run: |
+          Set-PSRepository PSGallery -InstallationPolicy Trusted
+          Install-Module PSScriptAnalyzer -MinimumVersion 1.22.0 -Scope CurrentUser -Force
+          Install-Module Pester           -MinimumVersion 5.5.0  -Scope CurrentUser -Force
+
+      - name: PSScriptAnalyzer (repo settings)
+        shell: ${{ matrix.shell }}
+        run: |
+          $files = Get-ChildItem -Recurse -Filter *.ps1 |
+                   Where-Object FullName -notmatch '\\archived\\|\.Tests\.ps1$'
+          $r = Invoke-ScriptAnalyzer -Path $files.FullName `
+                 -Settings ./PSScriptAnalyzerSettings.psd1
+          $r | Format-Table -AutoSize | Out-String | Write-Host
+          $errors = @($r | Where-Object Severity -eq 'Error')
+          if ($errors.Count) { throw "PSScriptAnalyzer: $($errors.Count) error(s)." }
+
+      - name: Encoding / BOM lint
+        shell: ${{ matrix.shell }}
+        run: ./build/Test-CITEncoding.ps1 -Path . -FailOnViolation
+
+      - name: Logging-convention + dot-source contract lint
+        shell: ${{ matrix.shell }}
+        run: ./build/Test-CITLoggingContract.ps1 -Path . -FailOnViolation
+
+      - name: Pester (all tests, with coverage gate)
+        shell: ${{ matrix.shell }}
+        run: |
+          $cfg = New-PesterConfiguration
+          $cfg.Run.Path                     = './'
+          $cfg.Run.Throw                    = $true            # fail the step on any failing test
+          $cfg.TestResult.Enabled           = $true
+          $cfg.TestResult.OutputPath        = 'testResults.xml'
+          $cfg.CodeCoverage.Enabled         = $true
+          $cfg.CodeCoverage.Path            = (Get-ChildItem -Recurse -Filter *.ps1 |
+                                               Where-Object FullName -notmatch '\\archived\\|\.Tests\.ps1$').FullName
+          $cfg.CodeCoverage.CoveragePercentTarget = 40         # ratchet up as backfill lands
+          Invoke-Pester -Configuration $cfg
+
+      - name: Exit-code contract harness
+        shell: ${{ matrix.shell }}
+        run: ./build/Invoke-CITContractHarness.ps1 -Path . -FailOnViolation
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pester-results-${{ matrix.shell }}
+          path: testResults.xml
+
+  signing-check:
+    name: Signature validation (release branches)
+    runs-on: windows-latest
+    if: github.event_name == 'push' &amp;&amp; github.ref == 'refs/heads/main'
+    needs: analyze-and-test
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify Authenticode on shipped scripts
+        shell: powershell
+        run: |
+          $unsigned = Get-ChildItem -Recurse -Filter *.ps1 |
+            Where-Object FullName -notmatch '\\archived\\|\.Tests\.ps1$' |
+            Where-Object { (Get-AuthenticodeSignature $_.FullName).Status -ne 'Valid' }
+          if ($unsigned) {
+            $unsigned.FullName | Write-Host
+            throw "$($unsigned.Count) script(s) not validly signed."
+          }</code></pre>
+<p>(<code>signing-check</code> is gated to <code>main</code> because the dev tree is intentionally unsigned; the live signing cert is not in CI. On a self-hosted runner that holds the cert, this becomes the real Layer-3 gate.)</p>
+<hr/>
+<h2>3. The validation skill — <code>/validate-script</code></h2>
+<p>A repo skill an author runs on <strong>one</strong> script before committing. Implemented as <code>build/Invoke-CITScriptValidation.ps1</code> plus a thin <code>.claude/skills/validate-script/SKILL.md</code> wrapper so it is invokable as <code>/validate-script &lt;path&gt;</code>.</p>
+<h3>Inputs</h3>
+<ul>
+<li><code>-Path &lt;file.ps1&gt;</code> (required) — the script to validate.</li>
+<li><code>-Role &lt;Detect|Remediate|Diag|Activity|Module&gt;</code> (optional; inferred from filename: <code>Detect-*</code>→Detect, <code>Remediate-*</code>→Remediate, <code>*WUDiag*</code>/<code>FW-Diag</code>→Diag, <code>CIT-Logging</code>→Module, else Activity).</li>
+<li><code>-SkipPester</code> (optional) — analyzer + lint only.</li>
+<li><code>-Json</code> (optional) — machine-readable output for the pre-commit hook.</li>
+</ul>
+<h3>Checks (each emits PASS / FAIL / WARN + a one-line remedy)</h3>
+<ol>
+<li><strong>Parse</strong> — <code>[Parser]::ParseFile</code>; FAIL on syntax errors.</li>
+<li><strong>Analyzer</strong> — <code>Invoke-ScriptAnalyzer -Settings ./PSScriptAnalyzerSettings.psd1</code>; FAIL on Error severity, WARN on Warning.</li>
+<li><strong>Encoding/signing</strong> — BOM-less + any byte &gt; 0x7F → FAIL (em-dash class); CRLF policy → WARN.</li>
+<li><strong>Logging contract</strong> — if the script dot-sources <code>CIT-Logging.ps1</code>, assert no <code>-ScriptName</code> arg is passed (the binding crash) <strong>and</strong> that the file actually resolves at the relative path; if it inlines <code>Write-CITLog</code>, assert the log dir is <code>C:\ProgramData\CIT\Logs</code>. FAIL on the <code>-ScriptName</code>-against-paramless pattern specifically.</li>
+<li><strong>Load-contract (dot-source as production does)</strong> — actually dot-sources the helper the way the script does and asserts it does not throw. This is the check that the AST-only tests never had.</li>
+<li><strong>SysNative guard</strong> — if the script references <code>Get-BitLockerVolume|Suspend-BitLocker|Get-WindowsFeature</code> (32-bit-redirected modules) and has <strong>no</strong> <code>PROCESSOR_ARCHITEW6432</code>/<code>SysNative</code>/<code>Is64BitProcess</code> re-launch → FAIL.</li>
+<li><strong>Exit-code simulation</strong> — runs the matching <code>.Tests.ps1</code> contract block (mocks injected) and asserts: Detect emits only {0,1,2}; Remediate/Activity emit only {0,2} (never 1); a forced failure of the primary action yields a non-zero exit and a <code>Status</code> token that is <strong>not</strong> <code>COMPLETE</code>. Directly targets the false-success class.</li>
+<li><strong>Matching Pester</strong> — runs <code>&lt;script&gt;.Tests.ps1</code> if present; WARN (loudly) if absent and the script has zero behavioral tests.</li>
+</ol>
+<h3>Output format</h3>
+<p>Human (default): a table + a single verdict line <code>VALIDATION: FAIL (3 errors, 2 warnings)</code>; non-zero exit so the hook blocks. <code>-Json</code>: <code>{ path, role, verdict, checks:[{name,result,detail,remedy}], errors, warnings }</code>.</p>
+<h3>Skeleton — <code>build/Invoke-CITScriptValidation.ps1</code></h3>
+<pre class="code" data-lang="powershell"><code>[CmdletBinding()]
+param(
+    [Parameter(Mandatory)][string]$Path,
+    [ValidateSet('Detect','Remediate','Diag','Activity','Module')][string]$Role,
+    [switch]$SkipPester,
+    [switch]$Json
+)
+$ErrorActionPreference = 'Stop'
+$results = [System.Collections.Generic.List[object]]::new()
+function Add-Result($Name,$Result,$Detail,$Remedy='') {
+    $results.Add([pscustomobject]@{ Name=$Name; Result=$Result; Detail=$Detail; Remedy=$Remedy })
+}
+$repoRoot = (git -C (Split-Path $Path) rev-parse --show-toplevel)
+$settings = Join-Path $repoRoot 'PSScriptAnalyzerSettings.psd1'
+$leaf     = Split-Path $Path -Leaf
+if (-not $Role) {
+    $Role = switch -Regex ($leaf) {
+        '^Detect-'      {'Detect';    break}
+        '^Remediate-'   {'Remediate'; break}
+        'WUDiag|FW-Diag'{'Diag';      break}
+        'CIT-Logging'   {'Module';    break}
+        default         {'Activity'}
+    }
+}
+
+# 1. Parse
+$pe = $null
+[System.Management.Automation.Language.Parser]::ParseFile($Path,[ref]$null,[ref]$pe) | Out-Null
+if ($pe) { Add-Result 'Parse' 'FAIL' "$($pe.Count) syntax error(s)" 'Fix syntax before committing.' }
+else     { Add-Result 'Parse' 'PASS' 'Clean parse' }
+
+# 2. Analyzer
+$an = Invoke-ScriptAnalyzer -Path $Path -Settings $settings
+$anErr = @($an | Where-Object Severity -eq 'Error')
+Add-Result 'Analyzer' ($(if($anErr){'FAIL'}elseif($an){'WARN'}else{'PASS'})) `
+    "$($anErr.Count) error / $(@($an).Count - $anErr.Count) warning" `
+    'Resolve Error-severity rules (null-RHS, unapproved verbs, PS7 syntax).'
+
+# 3. Encoding / signing
+$bytes = [IO.File]::ReadAllBytes($Path)
+$hasBom = $bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF
+$nonAscii = $bytes | Where-Object { $_ -gt 0x7F } | Select-Object -First 1
+if ($nonAscii -and -not $hasBom) {
+    Add-Result 'Encoding' 'FAIL' 'BOM-less file with non-ASCII byte (em-dash class)' `
+        'Replace non-ASCII with ASCII, or save UTF-8 with BOM before signing.'
+} else { Add-Result 'Encoding' 'PASS' 'ASCII-only or UTF-8-with-BOM' }
+
+# 4 + 5. Logging / dot-source contract  (the FW-ApplyUpdate / WUDiag critical)
+$src = Get-Content $Path -Raw
+if ($src -match 'CIT-Logging\.ps1["'']?\s+-ScriptName') {
+    Add-Result 'LoggingContract' 'FAIL' 'Dot-sources CIT-Logging.ps1 with -ScriptName (paramless script -&gt; binding crash)' `
+        'Drop -ScriptName from the dot-source, or add param([string]$ScriptName) to CIT-Logging.ps1.'
+} else { Add-Result 'LoggingContract' 'PASS' 'No unsupported dot-source argument' }
+
+# 6. SysNative guard for 32-bit-redirected modules
+if ($src -match 'Get-BitLockerVolume|Suspend-BitLocker|Get-WindowsFeature' `
+        -and $src -notmatch 'PROCESSOR_ARCHITEW6432|SysNative|Is64BitProcess') {
+    Add-Result 'SysNativeGuard' 'FAIL' 'Uses a 64-bit-only module with no SysNative re-launch' `
+        'Add the PROCESSOR_ARCHITEW6432 re-launch guard at the top of the script.'
+} else { Add-Result 'SysNativeGuard' 'PASS' 'No unguarded 64-bit module dependency' }
+
+# 7 + 8. Behavioral / exit-code contract via the matching Pester file
+$testFile = $Path -replace '\.ps1$','.Tests.ps1'
+if (-not $SkipPester -and (Test-Path $testFile)) {
+    $cfg = New-PesterConfiguration
+    $cfg.Run.Path = $testFile; $cfg.Run.PassThru = $true; $cfg.Output.Verbosity = 'None'
+    $p = Invoke-Pester -Configuration $cfg
+    Add-Result 'Pester' ($(if($p.FailedCount){'FAIL'}else{'PASS'})) `
+        "$($p.PassedCount) passed / $($p.FailedCount) failed" 'Fix failing assertions.'
+} elseif (-not (Test-Path $testFile)) {
+    Add-Result 'Pester' 'WARN' 'No matching .Tests.ps1' 'Add behavioral tests (see backfill plan).'
+}
+
+# Verdict
+$fail = @($results | Where-Object Result -eq 'FAIL').Count
+$warn = @($results | Where-Object Result -eq 'WARN').Count
+$verdict = if ($fail) {'FAIL'} elseif ($warn) {'PASS (with warnings)'} else {'PASS'}
+if ($Json) {
+    [pscustomobject]@{ path=$Path; role=$Role; verdict=$verdict; checks=$results;
+        errors=$fail; warnings=$warn } | ConvertTo-Json -Depth 5
+} else {
+    $results | Format-Table Name,Result,Detail -AutoSize | Out-String | Write-Host
+    Write-Host "VALIDATION: $verdict ($fail errors, $warn warnings)" `
+        -Foreground $(if($fail){'Red'}elseif($warn){'Yellow'}else{'Green'})
+}
+if ($fail) { exit 1 }</code></pre>
+<p><code>.claude/skills/validate-script/SKILL.md</code> is a thin wrapper: <em>"Run <code>build/Invoke-CITScriptValidation.ps1 -Path &lt;arg&gt;</code>; if it exits non-zero, summarize the FAIL rows and propose the listed remedies."</em></p>
+<hr/>
+<h2>4. Test-coverage backfill plan</h2>
+<p>Priority by <code>deploymentRiskScore</code> × "no test today". The three with <strong>zero</strong> tests come first: <code>CIT-Logging</code>, <code>bitlocker-reseal</code> pair, <code>patch-compliance</code> pair. Then fix the misleading existing tests (AST-only / asserting absent strings).</p>
+<p><strong>Shared test infra to build first:</strong> a <code>CITTestHelpers.psm1</code> that mocks <code>Get-WinEvent</code>, <code>Get-BitLockerVolume</code>, <code>Suspend-BitLocker</code>, registry, COM (<code>Microsoft.Update.Session</code>), and a runner that executes a script in a child PowerShell and captures <code>(exitcode, stdout)</code> so exit-code contracts are assertable.</p>
+<div class="table-wrap"><table>
+<thead><tr><th>Script(s)</th><th>Test must assert</th></tr></thead>
+<tbody><tr><td><strong><code>platform/CIT-Logging.ps1</code></strong> (none)</td><td>• <code>Write-CITLog</code> <strong>never throws</strong> when <code>Add-Content</code> fails — mock <code>Add-Content</code> to throw an <code>IOException</code> under caller <code>$ErrorActionPreference='Stop'</code>; assert the call returns silently (the high-sev best-effort-logging fix). • Log path = <code>C:\ProgramData\CIT\Logs\&lt;ScriptName&gt;.log</code>. • <code>Invoke-CITSafely</code> returns <code>$true</code> on success, <code>$false</code> on caught failure, and logs. • <strong>doc/signature parity:</strong> dot-source it <em>exactly as production does</em> — with and without <code>-ScriptName</code> — and assert the agreed contract (this is the test that catches the FW-ApplyUpdate/WUDiag critical at the source).</td></tr><tr><td><strong><code>bitlocker-reseal/Detect-*</code></strong> (none)</td><td>• Mock <code>Get-WinEvent</code> to return a recovery event on the <strong>operational channel</strong> → exit 1. • No recovery event → exit 0. • Sentinel set → exit 0 regardless. • <strong>Regression guard:</strong> assert the query targets <code>Microsoft-Windows-BitLocker/BitLocker Management</code>, not <code>System</code>/767 (the false-compliant finding).</td></tr><tr><td><strong><code>bitlocker-reseal/Remediate-*</code></strong> (none)</td><td>• <strong>SysNative guard present</strong> (string/AST). • Mock <code>Get-BitLockerVolume</code> not-<code>On</code> → no sentinel written, re-evaluable next cycle. • No TPM protector → no false success. • <strong>Idempotency:</strong> run twice with a <em>failing</em> sentinel write → <code>Suspend-BitLocker</code> is <strong>not</strong> called twice (the re-suspend loop). • Sentinel written <strong>before</strong> suspend.</td></tr><tr><td><strong><code>patch-compliance/Detect-*</code></strong> (none)</td><td>• Mock WU <code>QueryHistory</code> returning a Defender definition update as newest → script must <strong>not</strong> report compliant off it (filter to Cumulative/Security). • <code>PendingFileRenameOperations</code> set as a <strong>value</strong> → reboot detected (not key-path Test-Path). • Stale cumulative (&gt;14d) → exit 1. • UTC/local delta normalized near threshold.</td></tr><tr><td><strong><code>patch-compliance/Remediate-*</code></strong> &amp; <strong>patch-remediation <code>WUFix-*</code></strong> (AST-only today)</td><td>• A UsoClient launch with no verifiable progress → <strong>not</strong> <code>Status=COMPLETE</code>, exit ≠ 0 (false-success class). • COM path success → <code>COMPLETE</code>. • Component/DiskClean: forced rename/DISM failure → <code>Status=PARTIAL/FAILED</code> + non-zero. • DiskClean: emit <code>FreeSpaceFreedGB</code> delta. • Reboot: <code>Win32_ComputerSystem.UserName</code> null must <strong>fail safe</strong> (treat as user-present), and JSON is flushed <strong>before</strong> reboot.</td></tr><tr><td><strong><code>secure-boot-cert/*</code></strong> (tests exist but wrong)</td><td>• Replace the <code>'CertificateUpdate'</code> assertion with <code>'Secure-Boot-Update'</code> (red gate). • Mock <code>Confirm-SecureBootUEFI</code> <strong>throw</strong> (legacy BIOS) → <code>Compliant=1</code>/exit 0, <strong>not</strong> exit 1; Remediate writes <strong>no</strong> bitmask. • <code>UEFICA2023Error</code> non-zero → distinct token + exit 2, not silent <code>AlreadySet</code>.</td></tr><tr><td><strong><code>firewall-fw-update/FW-*</code></strong> (AST-only today)</td><td>• <strong>Load-contract:</strong> dot-source <code>CIT-Logging.ps1</code> as production does → assert no crash (catches FW-ApplyUpdate critical). • Mock Posh-SSH absent → <code>MISSING_DEPENDENCY</code> JSON + exit 2 (not raw throw). • Credential resolver under SYSTEM <code>USERPROFILE</code> → does not silently miss a machine-path key. • FW-Diag: empty <code>-TargetFirmware</code> → distinct <code>NO_TARGET_BASELINE</code>, not false healthy. • Vendor partials: HA parse via <code>-join</code> then <code>-match</code> (not array <code>$matches</code>); <code>Backup-*</code>/<code>Stage-*</code> set <code>Success</code> from real output, not unconditionally.</td></tr></tbody></table></div>
+<hr/>
+<h2>5. Rollout order (biggest deploy-failure reduction first)</h2>
+<ol>
+<li><strong>Fix <code>CIT-Logging.ps1</code> + the dot-source contract, and add its unit test.</strong> One change neutralizes two <em>critical</em> findings (FW-ApplyUpdate, WUDiag are dead on every endpoint) plus the high-sev "logging throws and turns success into exit 2." Either add <code>param([string]$ScriptName)</code> or strip <code>-ScriptName</code> repo-wide — pick one, make the test enforce it. <strong>Highest ROI single action.</strong></li>
+<li><strong>Land <code>PSScriptAnalyzerSettings.psd1</code> + the encoding lint + the logging-contract lint, and the validation skill.</strong> Now every new commit is screened locally for the em-dash/signing, null-RHS, alias, and unapproved-verb classes, and authors get the load-contract crash <em>before</em> commit.</li>
+<li><strong>Add the CI workflow (<code>qa.yml</code>) with <code>fail-fast</code> on analyzer errors, failing Pester, and the contract harness.</strong> This makes the gate authoritative and stops the permanently-red-test-ignored pattern (<code>CertificateUpdate</code>). Start coverage target low (40%) and ratchet.</li>
+<li><strong>Build <code>CITTestHelpers.psm1</code> + the exit-code contract harness, then backfill the false-success scripts</strong> (<code>WUFix-*</code>, <code>patch-compliance</code>, <code>FW-Backup</code>/vendor partials). This kills the most insidious class: green dashboards over unpatched/unbacked-up devices.</li>
+<li><strong>Backfill <code>bitlocker-reseal</code> (SysNative guard + idempotency) and fix the <code>secure-boot-cert</code> tests</strong>, then add the Layer-3 pre-deploy gate (signature validity + SYSTEM-context smoke + double-run idempotency) to the deployer's workflow.</li>
+</ol>
+<p>Rationale: steps 1–3 are cheap, mostly static, and convert the two <em>guaranteed-dead</em> scripts plus the whole encoding/analyzer class from "ships broken" to "blocked at PR." Steps 4–5 require the mock harness investment but retire the false-success and idempotency-loop families that produce silent, dashboard-green failures — exactly the owner's "passes review, fails on deploy" symptom.</p>
+<hr/>
+<p>Files this proposal introduces (all paths absolute): <code>/workspace/ps-scripts/PSScriptAnalyzerSettings.psd1</code>, <code>/workspace/ps-scripts/.github/workflows/qa.yml</code>, <code>/workspace/ps-scripts/build/Invoke-CITScriptValidation.ps1</code>, <code>/workspace/ps-scripts/build/Test-CITEncoding.ps1</code>, <code>/workspace/ps-scripts/build/Test-CITLoggingContract.ps1</code>, <code>/workspace/ps-scripts/build/Invoke-CITContractHarness.ps1</code>, <code>/workspace/ps-scripts/tests/CITTestHelpers.psm1</code>, <code>/workspace/ps-scripts/.claude/skills/validate-script/SKILL.md</code>, plus a <code>.gitattributes</code> (<code>*.ps1 text eol=crlf</code>). The fix that unblocks the most endpoints is editing the existing <code>/workspace/ps-scripts/platform/CIT-Logging.ps1</code> to reconcile the <code>-ScriptName</code> contract.</p>
+
+  </section>
+
+  <footer class="report">
+    Generated 2026-06-27 for Kyle Etter, CIT Solutions &middot; Source: citmn/ps-scripts QA workflow
+    (21 scripts, 47 confirmed high/critical findings).
+  </footer>
+</div>
+</body>
+</html>
