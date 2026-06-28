@@ -1,10 +1,11 @@
+#Requires -Version 5.1
 # vendor-sonicwall.ps1
 # SonicWall SSH helper functions for firewall PIA scripts.
 # Author:  Kyle Etter
 # Created: 2026-06-13
 # Updated: 2026-06-13
 # Tested:  Windows 10 22H2, Windows 11 23H2
-# Intune:  Proactive Remediation — Shared helper
+# Intune:  Proactive Remediation - Shared helper
 # Notes:   Dot-sourced vendor partial. Uses Posh-SSH (New-SSHSession, Invoke-SSHCommand).
 #          Stubbed in v1 to allow Pester testing without real SSH hardware.
 #          All functions accept an -SshSession parameter and return PSCustomObjects.
@@ -44,23 +45,39 @@ function Get-CitSonicWallVersion {
     $version = Invoke-SSHCommand -SSHSession $SshSession -Command 'show version' -ErrorAction Stop
     $ha      = Invoke-SSHCommand -SSHSession $SshSession -Command 'show ha status' -ErrorAction SilentlyContinue
 
-    $model    = 'NSa-STUB-2700'
-    $firmware = 'SonicOS 7.1.2-7018-R6177'
-    $uptime   = 42
+    # Posh-SSH returns .Output as a STRING ARRAY. Running -match against the
+    # array does NOT populate $matches with a usable capture, so reading
+    # $matches[1] yields stale/garbage from a prior match. Join to one string
+    # first, then match. Init parsed vars to $null and only set ParseOk when a
+    # real value is read - never return fabricated defaults as telemetry.
+    $versionText = ($version.Output -join "`n")
+    $haText      = if ($ha) { ($ha.Output -join "`n") } else { '' }
 
-    foreach ($line in $version.Output) {
-        if ($line -match 'Model Name:\s*(.+)') { $model = $matches[1].Trim() }
-        if ($line -match 'Firmware Version:\s*(.+)') { $firmware = $matches[1].Trim() }
+    $model     = $null
+    $firmware  = $null
+    $uptime    = $null
+    $parseOk   = $true
+    $parseErr  = $null
+
+    if ($versionText -match 'Model Name:\s*(.+)') { $model = $matches[1].Trim() }
+    if ($versionText -match 'Firmware Version:\s*(.+)') { $firmware = $matches[1].Trim() }
+    if ($versionText -match 'Up Time:\s*(\d+)\s*Days') { $uptime = [int]$matches[1] }
+
+    if (-not $firmware) {
+        $parseOk  = $false
+        $parseErr = 'Could not parse Firmware Version from SonicWall "show version" output.'
     }
 
-    $haState  = 'standalone'
-    $haRole   = 'active'
+    $haState  = $null
+    $haRole   = $null
     $haPeerUp = $false
 
-    if ($ha -and $ha.Output -match 'HA State:\s*(.+)') {
+    if ($haText -match 'HA State:\s*(.+)') {
         $haState = $matches[1].Trim()
-        $haPeerUp = ($ha.Output -match 'Peer Status:\s*Online')
-        $haRole = if ($ha.Output -match 'Current Role:\s*(.+)') { $matches[1].Trim() } else { 'active' }
+        $haPeerUp = ($haText -match 'Peer Status:\s*Online')
+        if ($haText -match 'Current Role:\s*(.+)') { $haRole = $matches[1].Trim() }
+    } else {
+        $haState = 'standalone'
     }
 
     return [PSCustomObject]@{
@@ -71,6 +88,8 @@ function Get-CitSonicWallVersion {
         HAState       = $haState
         HARole        = $haRole
         HAPeerPresent = $haPeerUp
+        ParseOk       = $parseOk
+        ParseError    = $parseErr
         RawVersion    = $version.Output
         RawHA         = if ($ha) { $ha.Output } else { $null }
     }
@@ -91,28 +110,45 @@ function Backup-CitSonicWallConfig {
 
     $result = Invoke-SSHCommand -SSHSession $SshSession -Command 'export settings' -ErrorAction Stop
 
+    # Do not assume the export succeeded. Gate Success on the remote command's
+    # ExitStatus (0 = ok) and only flip to true after we have also written the
+    # config to disk. A non-zero ExitStatus or empty output means no real backup.
     $backup = [PSCustomObject]@{
         Vendor       = 'SonicWall'
-        Success      = $true
+        Success      = $false
         FilePath     = $fullPath
         FileName     = $fileName
         TimestampUtc = (Get-Date).ToUniversalTime().ToString('o')
         RawOutput    = $result.Output
+        BackupError  = $null
+    }
+
+    $exitStatus = $result.ExitStatus
+    if ($null -ne $exitStatus -and $exitStatus -ne 0) {
+        $backup.BackupError = "SonicWall 'export settings' returned non-zero ExitStatus $exitStatus."
+        Write-CITLog -Message $backup.BackupError -Level ERROR -ScriptName 'FW-Vendor-SonicWall'
+        return $backup
+    }
+
+    if (-not $result.Output) {
+        $backup.BackupError = "SonicWall 'export settings' returned no output; nothing to back up."
+        Write-CITLog -Message $backup.BackupError -Level ERROR -ScriptName 'FW-Vendor-SonicWall'
+        return $backup
     }
 
     try {
         New-Item -ItemType Directory -Path $DestinationPath -Force | Out-Null
         Set-Content -Path $fullPath -Value ($result.Output -join "`r`n") -Encoding UTF8 -Force
+        $backup.Success = $true
     } catch {
-        $backup.Success = $false
-        $backup | Add-Member -MemberType NoteProperty -Name 'BackupError' -Value $_.Exception.Message
+        $backup.BackupError = $_.Exception.Message
         Write-CITLog -Message "Failed to write SonicWall backup to disk: $($_.Exception.Message)" -Level ERROR -ScriptName 'FW-Vendor-SonicWall'
     }
 
     return $backup
 }
 
-function Stage-CitSonicWallFirmware {
+function Save-CitSonicWallFirmware {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)] $SshSession,
@@ -134,16 +170,28 @@ function Stage-CitSonicWallFirmware {
     $fileName = Split-Path $ImagePath -Leaf
     $result   = Invoke-SSHCommand -SSHSession $SshSession -Command "firmware staging $fileName" -ErrorAction Stop
 
+    # Gate Staged on the remote ExitStatus instead of assuming success; a
+    # falsely-staged image would later be applied against nothing.
+    $staged     = $true
+    $stageError = $null
+    $exitStatus = $result.ExitStatus
+    if ($null -ne $exitStatus -and $exitStatus -ne 0) {
+        $staged     = $false
+        $stageError = "SonicWall 'firmware staging' returned non-zero ExitStatus $exitStatus."
+        Write-CITLog -Message $stageError -Level ERROR -ScriptName 'FW-Vendor-SonicWall'
+    }
+
     return [PSCustomObject]@{
         Vendor    = 'SonicWall'
-        Staged    = $true
+        Staged    = $staged
+        Error     = $stageError
         ImagePath = $ImagePath
         FileName  = $fileName
         RawOutput = $result.Output
     }
 }
 
-function Failover-CitSonicWallActive {
+function Switch-CitSonicWallActive {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)] $SshSession
@@ -160,7 +208,7 @@ function Failover-CitSonicWallActive {
     }
 }
 
-function Apply-CitSonicWallUpdate {
+function Install-CitSonicWallUpdate {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)] $SshSession,
@@ -171,10 +219,23 @@ function Apply-CitSonicWallUpdate {
 
     $result = Invoke-SSHCommand -SSHSession $SshSession -Command 'firmware upgrade and reboot' -ErrorAction Stop
 
+    # Gate Applied/RebootInit on the remote ExitStatus; reporting success when
+    # the upgrade command failed would let the workflow proceed to verify (and
+    # eventually auto-resolve) a firewall that never upgraded.
+    $applied    = $true
+    $applyError = $null
+    $exitStatus = $result.ExitStatus
+    if ($null -ne $exitStatus -and $exitStatus -ne 0) {
+        $applied    = $false
+        $applyError = "SonicWall 'firmware upgrade and reboot' returned non-zero ExitStatus $exitStatus."
+        Write-CITLog -Message $applyError -Level ERROR -ScriptName 'FW-Vendor-SonicWall'
+    }
+
     return [PSCustomObject]@{
         Vendor     = 'SonicWall'
-        Applied    = $true
-        RebootInit = $true
+        Applied    = $applied
+        RebootInit = $applied
+        Error      = $applyError
         ImagePath  = $ImagePath
         RawOutput  = $result.Output
     }

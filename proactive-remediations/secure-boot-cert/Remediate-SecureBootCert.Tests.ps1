@@ -1,10 +1,13 @@
+#Requires -Version 5.1
 # Remediate-SecureBootCert.Tests.ps1
 # Pester 5+ tests for Remediate-SecureBootCert-v2.ps1
 # Updated 2026-06-23 - Rewritten for v2 registry-bitmask remediation model
 
+[System.Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseDeclaredVarsMoreThanAssignments','scriptPath',Justification='Referenced inside Pester Describe/It child scopes; the rule does not track cross-scope usage.')]
+param()
+
 BeforeAll {
     $scriptPath = Join-Path $PSScriptRoot 'Remediate-SecureBootCert-v2.ps1'
-    $scriptName = 'Remediate-SecureBootCert'
 }
 
 function Test-PlatformIsWindows {
@@ -49,7 +52,7 @@ Describe 'Remediate-SecureBootCert-v2' {
 
         It 'references the SecureBoot Servicing registry key' {
             $content = Get-Content $scriptPath -Raw
-            $content | Should -Match 'SecureBoot\\\\Servicing'
+            $content | Should -Match 'SecureBoot\\Servicing'
             $content | Should -Match 'AvailableUpdates'
         }
 
@@ -97,7 +100,7 @@ Describe 'Remediate-SecureBootCert-v2' {
 
         It 'attempts to trigger the SecureBoot scheduled task' {
             $content = Get-Content $scriptPath -Raw
-            $content | Should -Match 'CertificateUpdate'
+            $content | Should -Match 'Secure-Boot-Update'
             $content | Should -Match 'Start-ScheduledTask'
         }
 
@@ -110,8 +113,11 @@ Describe 'Remediate-SecureBootCert-v2' {
 
     Context 'PowerShell 5.1 compatibility' {
         It 'does not use ConvertTo-Json -Compress (PS 6+ only)' {
-            $content = Get-Content $scriptPath -Raw
-            $content | Should -Not -Match 'ConvertTo-Json.*-Compress'
+            # Exclude comment lines so a changelog note mentioning the parameter
+            # does not false-trip the check; we only care about actual usage.
+            $codeLines = Get-Content $scriptPath | Where-Object { $_ -notmatch '^\s*#' }
+            $code = $codeLines -join "`n"
+            $code | Should -Not -Match 'ConvertTo-Json.*-Compress'
         }
 
         It 'sets $ProgressPreference to SilentlyContinue' {

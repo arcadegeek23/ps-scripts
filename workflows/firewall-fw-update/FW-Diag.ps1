@@ -1,10 +1,11 @@
+#Requires -Version 5.1
 # FW-Diag.ps1
 # SSH to firewall, gather model/firmware/HA/uptime JSON.
 # Author:  Kyle Etter
 # Created: 2026-06-13
 # Updated: 2026-06-13
 # Tested:  Windows 10 22H2, Windows 11 23H2
-# Intune:  Proactive Remediation — Diagnostic
+# Intune:  Proactive Remediation - Diagnostic
 # Notes:   No mutation. Exit 0 = healthy firmware, 1 = upgrade needed, 2+ = error.
 #          Supports SonicWall and Fortinet; WatchGuard is phase 2.
 
@@ -24,6 +25,33 @@ $WarningPreference     = 'Continue'
 
 try {
     Write-CITLog -Message "Starting firewall diagnostic for $Vendor at $FirewallAddress" -Level INFO -ScriptName 'FW-Diag'
+
+    if (-not $TargetFirmware) {
+        # An empty TargetFirmware (the default) must NEVER be interpreted as
+        # "firmware healthy / exit 0". With no baseline to compare against the
+        # diagnostic cannot judge compliance, so report a contract error and a
+        # non-success exit instead of silently passing every firewall.
+        Write-CITLog -Message 'No TargetFirmware supplied; cannot establish a baseline.' -Level ERROR -ScriptName 'FW-Diag'
+        [PSCustomObject]@{
+            Action    = 'NO_TARGET_BASELINE'
+            Message   = 'No TargetFirmware was supplied; cannot determine whether an upgrade is needed. Pass -TargetFirmware with the approved baseline version.'
+            Vendor    = $Vendor
+            Firewall  = $FirewallAddress
+            Timestamp = (Get-Date).ToString('o')
+        } | ConvertTo-Json -Compress | Write-Output
+        exit 2
+    }
+
+    if (-not (Assert-CitPoshSsh -ScriptName 'FW-Diag')) {
+        [PSCustomObject]@{
+            Action    = 'POSH_SSH_UNAVAILABLE'
+            Message   = 'Posh-SSH module is not available to this process. Install it machine-wide: Install-Module Posh-SSH -Scope AllUsers.'
+            Vendor    = $Vendor
+            Firewall  = $FirewallAddress
+            Timestamp = (Get-Date).ToString('o')
+        } | ConvertTo-Json -Compress | Write-Output
+        exit 2
+    }
 
     $credential = Get-CitFirewallCredential -KeyPath $KeyPath
     if ($credential.Source -eq 'NO_CREDENTIAL_SOURCE') {
@@ -48,10 +76,13 @@ try {
     $sessionParams = @{
         ComputerName = $FirewallAddress
         Port         = 22
+        AcceptKey    = $true
         ErrorAction  = 'Stop'
     }
     if ($credential.Source -eq 'SSH_KEY') {
         $sessionParams['KeyFile'] = $credential.KeyPath
+        $securePassword = New-Object System.Security.SecureString
+        $sessionParams['Credential'] = New-Object System.Management.Automation.PSCredential($credential.Username, $securePassword)
     } else {
         $sessionParams['Credential'] = $credential.Credential
     }
@@ -67,8 +98,22 @@ try {
 
     Remove-SSHSession -SSHSession $session | Out-Null
 
+    # If the read was not implemented / could not be parsed, do not pretend the
+    # firewall is healthy. Report that we cannot verify and exit non-success.
+    if (-not $diag.ParseOk) {
+        Write-CITLog -Message "Could not parse firmware/version from device: $($diag.ParseError)" -Level ERROR -ScriptName 'FW-Diag'
+        [PSCustomObject]@{
+            Action    = 'NOT_IMPLEMENTED'
+            Message   = "Vendor telemetry could not be read or parsed: $($diag.ParseError)"
+            Vendor    = $Vendor
+            Firewall  = $FirewallAddress
+            Timestamp = (Get-Date).ToString('o')
+        } | ConvertTo-Json -Compress | Write-Output
+        exit 2
+    }
+
     $upgradeNeeded = $false
-    if ($TargetFirmware -and $diag.Firmware -ne $TargetFirmware) {
+    if ($diag.Firmware -ne $TargetFirmware) {
         $upgradeNeeded = $true
     }
 

@@ -1,10 +1,11 @@
+#Requires -Version 5.1
 # FW-Verify.ps1
 # Wait for firewall reboot, confirm new firmware and uptime.
 # Author:  Kyle Etter
 # Created: 2026-06-13
 # Updated: 2026-06-13
 # Tested:  Windows 10 22H2, Windows 11 23H2
-# Intune:  Proactive Remediation — Remediation
+# Intune:  Proactive Remediation - Remediation
 # Notes:   Polls SSH up to 15 minutes (configurable). Confirms firmware version,
 #          uptime reset, and key policy/VPN states. Returns RECOVERY_NEEDED if deadline hit.
 
@@ -27,6 +28,17 @@ $WarningPreference     = 'Continue'
 try {
     Write-CITLog -Message "Starting firmware verification for $Vendor at $FirewallAddress" -Level INFO -ScriptName 'FW-Verify'
 
+    if (-not (Assert-CitPoshSsh -ScriptName 'FW-Verify')) {
+        [PSCustomObject]@{
+            Action    = 'POSH_SSH_UNAVAILABLE'
+            Message   = 'Posh-SSH module is not available to this process. Install it machine-wide: Install-Module Posh-SSH -Scope AllUsers.'
+            Vendor    = $Vendor
+            Firewall  = $FirewallAddress
+            Timestamp = (Get-Date).ToString('o')
+        } | ConvertTo-Json -Compress | Write-Output
+        exit 2
+    }
+
     $credential = Get-CitFirewallCredential -KeyPath $KeyPath
     if ($credential.Source -eq 'NO_CREDENTIAL_SOURCE') {
         [PSCustomObject]@{
@@ -44,10 +56,13 @@ try {
     $sessionParams = @{
         ComputerName = $FirewallAddress
         Port         = 22
+        AcceptKey    = $true
         ErrorAction  = 'Stop'
     }
     if ($credential.Source -eq 'SSH_KEY') {
         $sessionParams['KeyFile'] = $credential.KeyPath
+        $securePassword = New-Object System.Security.SecureString
+        $sessionParams['Credential'] = New-Object System.Management.Automation.PSCredential($credential.Username, $securePassword)
     } else {
         $sessionParams['Credential'] = $credential.Credential
     }
@@ -67,8 +82,12 @@ try {
                 'Fortinet'  { $diag = Get-CitFortinetVersion -SshSession $session }
             }
 
-            $firmwareOk = ($diag.Firmware -eq $ExpectedFirmware)
-            $uptimeOk   = ($diag.UptimeDays -lt 1)
+            # Only treat the device as verified when the telemetry was actually
+            # parsed. A NOT_IMPLEMENTED / unparsed read means "cannot verify",
+            # not "healthy" - keep polling until the deadline.
+            $parseOk    = [bool]$diag.ParseOk
+            $firmwareOk = ($parseOk -and $diag.Firmware -eq $ExpectedFirmware)
+            $uptimeOk   = ($parseOk -and $null -ne $diag.UptimeDays -and $diag.UptimeDays -lt 1)
 
             if ($firmwareOk -and $uptimeOk) {
                 $policyCmd = switch ($Vendor) {
@@ -81,7 +100,11 @@ try {
                 break
             }
 
-            $lastError = "Firmware=$($diag.Firmware), expected=$ExpectedFirmware, uptime=$($diag.UptimeDays)d"
+            if (-not $parseOk) {
+                $lastError = "Telemetry not parseable: $($diag.ParseError)"
+            } else {
+                $lastError = "Firmware=$($diag.Firmware), expected=$ExpectedFirmware, uptime=$($diag.UptimeDays)d"
+            }
             Remove-SSHSession -SSHSession $session | Out-Null
         } catch {
             $lastError = $_.Exception.Message

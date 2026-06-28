@@ -1,12 +1,15 @@
+#Requires -Version 5.1
 # CIT-PIA-WUFix-Components.ps1
 # Resets Windows Update components, repairs the component store, and re-scans.
 # Author:  Kyle Etter
 # Created: 2026-06-13
-# Updated: 2026-06-13
+# Updated: 2026-06-27
 # Tested:  Windows 10 22H2, Windows 11 23H2
-# Intune:  Proactive Remediation — Remediation
+# Intune:  Proactive Remediation - Remediation
 # Notes:   Blast radius: renames SoftwareDistribution and catroot2 (forces WU cache rebuild).
 #          DISM/SFC may take 15-30 minutes. A reboot is recommended after completion.
+#          Success is gated on the actual result of each sub-step; a failed rename /
+#          DISM / SFC / service restart no longer reports COMPLETE.
 
 [CmdletBinding()]
 param()
@@ -124,20 +127,48 @@ try {
     $started = Start-CitWUServices
     $scan    = Invoke-CitWUScan
 
-    if (-not $started) {
-        Write-CITLog -Message 'WU services could not be restarted' -Level ERROR -ScriptName 'CIT-PIA-WUFix-Components'
+    # The component reset only actually happened if the services stopped, the
+    # cache folders were renamed, the store repaired, and the services restarted.
+    # Any failed core step means the device is NOT remediated - do not report
+    # COMPLETE / exit 0 on a partial run.
+    $coreSuccess = $stopped -and $renamed -and $dism -and $sfc -and $started
+
+    if (-not $coreSuccess) {
+        Write-CITLog -Message "WU component reset did not fully succeed (Stopped=$stopped Renamed=$renamed DISM=$dism SFC=$sfc Started=$started)" -Level ERROR -ScriptName 'CIT-PIA-WUFix-Components'
+
+        [PSCustomObject]@{
+            Status            = 'FAILED'
+            ServicesStopped   = $stopped
+            FoldersRenamed    = $renamed
+            DismRestoreHealth = $dism
+            SfcScan           = $sfc
+            ServicesStarted   = $started
+            ScanTriggered     = $scan
+            RebootRecommended = $true
+        } | ConvertTo-Json -Compress | Write-Output
+
         exit 2
     }
 
     Write-CITLog -Message 'WU component reset remediation complete' -Level INFO -ScriptName 'CIT-PIA-WUFix-Components'
 
     [PSCustomObject]@{
-        Status           = 'COMPLETE'
+        Status            = 'COMPLETE'
+        ServicesStopped   = $stopped
+        FoldersRenamed    = $renamed
+        DismRestoreHealth = $dism
+        SfcScan           = $sfc
+        ServicesStarted   = $started
+        ScanTriggered     = $scan
         RebootRecommended = $true
     } | ConvertTo-Json -Compress | Write-Output
 
     exit 0
 } catch {
     Write-CITLog -Message "WU component reset remediation error: $($_.Exception.Message)" -Level ERROR -ScriptName 'CIT-PIA-WUFix-Components'
+    [PSCustomObject]@{
+        Status = 'FAILED'
+        Reason = 'unhandled-exception'
+    } | ConvertTo-Json -Compress | Write-Output
     exit 2
 }

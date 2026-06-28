@@ -1,10 +1,11 @@
+#Requires -Version 5.1
 # CIT-PIA-WUDiag.ps1
 # Diagnoses Windows Update patch-install failure mode and recommends a fix branch.
 # Author:  Kyle Etter
 # Created: 2026-06-13
-# Updated: 2026-06-13
+# Updated: 2026-06-27
 # Tested:  Windows 10 22H2, Windows 11 23H2
-# Intune:  Proactive Remediation — Diagnostic
+# Intune:  Proactive Remediation - Diagnostic
 # Notes:   Emits structured JSON to stdout for PIA workflow branching.
 #          Exit 0 = no fix needed; 1 = fix recommended; 2+ = error.
 
@@ -28,8 +29,28 @@ function Get-CitFreeSpaceGB {
 
 function Test-CitPendingReboot {
     try {
-        return (Test-Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing\RebootPending') -or
-               (Test-Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update\RebootRequired')
+        # 1. Component Based Servicing flags a pending reboot with a key.
+        if (Test-Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing\RebootPending') {
+            return $true
+        }
+
+        # 2. Windows Update sets a RebootRequired key after staging an update.
+        if (Test-Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update\RebootRequired') {
+            return $true
+        }
+
+        # 3. PendingFileRenameOperations is a VALUE under the Session Manager key,
+        #    not a key. The previous Test-Path-on-the-value never fired. Read the
+        #    value and treat any non-empty payload as a pending file-rename reboot.
+        $smPath = 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager'
+        if (Test-Path $smPath) {
+            $pfro = (Get-ItemProperty -Path $smPath -Name 'PendingFileRenameOperations' -ErrorAction SilentlyContinue).PendingFileRenameOperations
+            if ($pfro -and @($pfro | Where-Object { $_ -ne '' }).Count -gt 0) {
+                return $true
+            }
+        }
+
+        return $false
     } catch {
         Write-CITLog -Message "Unable to determine pending reboot state: $($_.Exception.Message)" -Level WARN -ScriptName 'CIT-PIA-WUDiag'
         return $false

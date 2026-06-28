@@ -1,10 +1,13 @@
+#Requires -Version 5.1
 # Detect-SecureBootCert.Tests.ps1
 # Pester 5+ tests for Detect-SecureBootCert-v2.ps1
 # Updated 2026-06-23 - Rewritten for v2 registry-status detection model
 
+[System.Diagnostics.CodeAnalysis.SuppressMessageAttribute('PSUseDeclaredVarsMoreThanAssignments','scriptPath',Justification='Referenced inside Pester Describe/It child scopes; the rule does not track cross-scope usage.')]
+param()
+
 BeforeAll {
     $scriptPath = Join-Path $PSScriptRoot 'Detect-SecureBootCert-v2.ps1'
-    $scriptName = 'Detect-SecureBootCert'
 }
 
 function Test-PlatformIsWindows {
@@ -44,7 +47,7 @@ Describe 'Detect-SecureBootCert-v2' {
 
         It 'references the SecureBoot Servicing registry key' {
             $content = Get-Content $scriptPath -Raw
-            $content | Should -Match 'SecureBoot\\\\Servicing'
+            $content | Should -Match 'SecureBoot\\Servicing'
             $content | Should -Match 'UEFICA2023Status'
         }
 

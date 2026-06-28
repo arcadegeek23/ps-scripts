@@ -1,10 +1,11 @@
+#Requires -Version 5.1
 # FW-ApplyUpdate.ps1
 # Triggers install of staged firmware image and reboots firewall.
 # Author:  Kyle Etter
 # Created: 2026-06-13
 # Updated: 2026-06-13
 # Tested:  Windows 10 22H2, Windows 11 23H2
-# Intune:  Proactive Remediation — Remediation
+# Intune:  Proactive Remediation - Remediation
 # Notes:   Pre-flight gate: requires -MaintenanceWindow or outside business hours.
 #          HA-aware: active unit fails over to passive before upgrade.
 #          Single-unit firewalls abort with NEEDS_CHANGE_WINDOW unless flagged.
@@ -52,6 +53,17 @@ try {
         exit 0
     }
 
+    if (-not (Assert-CitPoshSsh -ScriptName 'FW-ApplyUpdate')) {
+        [PSCustomObject]@{
+            Action    = 'POSH_SSH_UNAVAILABLE'
+            Message   = 'Posh-SSH module is not available to this process. Install it machine-wide: Install-Module Posh-SSH -Scope AllUsers.'
+            Vendor    = $Vendor
+            Firewall  = $FirewallAddress
+            Timestamp = (Get-Date).ToString('o')
+        } | ConvertTo-Json -Compress | Write-Output
+        exit 2
+    }
+
     $credential = Get-CitFirewallCredential -KeyPath $KeyPath
     if ($credential.Source -eq 'NO_CREDENTIAL_SOURCE') {
         [PSCustomObject]@{
@@ -69,10 +81,13 @@ try {
     $sessionParams = @{
         ComputerName = $FirewallAddress
         Port         = 22
+        AcceptKey    = $true
         ErrorAction  = 'Stop'
     }
     if ($credential.Source -eq 'SSH_KEY') {
         $sessionParams['KeyFile'] = $credential.KeyPath
+        $securePassword = New-Object System.Security.SecureString
+        $sessionParams['Credential'] = New-Object System.Management.Automation.PSCredential($credential.Username, $securePassword)
     } else {
         $sessionParams['Credential'] = $credential.Credential
     }
@@ -85,11 +100,27 @@ try {
         'Fortinet'  { $diag = Get-CitFortinetVersion -SshSession $session }
     }
 
+    # Never drive an HA failover decision off telemetry we could not parse.
+    # A stale/garbage HARole or HAState would risk an unnecessary or wrong
+    # failover (customer outage). Abort safely when the read is not trustworthy.
+    if (-not $diag.ParseOk) {
+        Remove-SSHSession -SSHSession $session | Out-Null
+        Write-CITLog -Message "Aborting apply: HA/version telemetry could not be parsed: $($diag.ParseError)" -Level ERROR -ScriptName 'FW-ApplyUpdate'
+        [PSCustomObject]@{
+            Action    = 'NOT_IMPLEMENTED'
+            Message   = "Cannot determine HA state/role from device telemetry; refusing to proceed with failover or upgrade. Detail: $($diag.ParseError)"
+            Vendor    = $Vendor
+            Firewall  = $FirewallAddress
+            Timestamp = (Get-Date).ToString('o')
+        } | ConvertTo-Json -Compress | Write-Output
+        exit 2
+    }
+
     if ($diag.HARole -eq 'active' -and $diag.HAPeerPresent) {
         Write-CITLog -Message 'HA active unit with peer present; failing over before upgrade' -Level INFO -ScriptName 'FW-ApplyUpdate'
         switch ($Vendor) {
-            'SonicWall' { $null = Failover-CitSonicWallActive -SshSession $session }
-            'Fortinet'  { $null = Failover-CitFortinetActive -SshSession $session }
+            'SonicWall' { $null = Switch-CitSonicWallActive -SshSession $session }
+            'Fortinet'  { $null = Switch-CitFortinetActive -SshSession $session }
         }
     }
 
@@ -108,13 +139,19 @@ try {
 
     $applyResult = $null
     switch ($Vendor) {
-        'SonicWall' { $applyResult = Apply-CitSonicWallUpdate -SshSession $session -ImagePath $ImagePath }
-        'Fortinet'  { $applyResult = Apply-CitFortinetUpdate -SshSession $session -ImagePath $ImagePath }
+        'SonicWall' { $applyResult = Install-CitSonicWallUpdate -SshSession $session -ImagePath $ImagePath }
+        'Fortinet'  { $applyResult = Install-CitFortinetUpdate -SshSession $session -ImagePath $ImagePath }
     }
 
     Remove-SSHSession -SSHSession $session | Out-Null
 
     $applyResult | ConvertTo-Json -Compress | Write-Output
+
+    if (-not $applyResult.Applied) {
+        Write-CITLog -Message "Firmware apply did not complete: $($applyResult.Error)" -Level ERROR -ScriptName 'FW-ApplyUpdate'
+        exit 2
+    }
+
     Write-CITLog -Message 'Firmware apply initiated; firewall rebooting' -Level INFO -ScriptName 'FW-ApplyUpdate'
     exit 0
 } catch {

@@ -40,8 +40,8 @@ HKLM\SYSTEM\CurrentControlSet\Control\SecureBoot\Servicing
 
 1. **Idempotency:** If `UEFICA2023Status = "Updated"`, exits 0 without action.
 2. **Check for prior error:** If `UEFICA2023Error` is non-zero, logs a warning but continues (retry may succeed if the error was transient).
-3. **Set the bitmask:** Sets `AvailableUpdates = 0x5944` (DWORD) under `HKLM:\SYSTEM\CurrentControlSet\Control\SecureBoot\Servicing`. This tells the Windows scheduled task to perform the full cert update sequence on its next run.
-4. **Trigger the task immediately:** Attempts to start the SecureBoot servicing scheduled task (`\Microsoft\Windows\SecureBoot\CertificateUpdate`) rather than waiting up to 12 hours for the next scheduled run. Non-fatal if the task path is not found.
+3. **Set the bitmask:** Sets `AvailableUpdates = 0x5944` (DWORD) under `HKLM:\SYSTEM\CurrentControlSet\Control\SecureBoot` (the parent key, not the `Servicing` subkey). This tells the Windows scheduled task to perform the full cert update sequence on its next run.
+4. **Trigger the task immediately:** Attempts to start the SecureBoot servicing scheduled task (`\Microsoft\Windows\PI\Secure-Boot-Update`) rather than waiting up to 12 hours for the next scheduled run. Non-fatal if the task path is not found.
 5. **No forced reboot.** The servicing task handles reboots natively. Some steps in the sequence require a restart to complete.
 
 **Blast radius:** Sets one registry DWORD under HKLM. Does not clear WU cache, stop services, delete files, or force reboots. The Windows scheduled task performs the actual firmware writes.

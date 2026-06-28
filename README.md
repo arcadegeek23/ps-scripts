@@ -7,6 +7,7 @@ PowerShell scripts for Microsoft Intune endpoint management — owned by **CIT S
 | Folder | Purpose |
 |---|---|
 | `proactive-remediations/` | Detection + remediation script pairs run by Intune PIA (Proactive Remediations) |
+| `workflows/` | Multi-step orchestrations that don't fit the Detect/Remediate pair pattern (e.g. SSH-driven runbooks) |
 | `compliance/` | Custom compliance JSON + PowerShell discovery scripts |
 | `win32-apps/` | IntuneWin packaging helpers, install/uninstall scripts, detection rules |
 | `endpoint-security/` | Defender, firewall, ASR rule, BitLocker scripts |
@@ -35,11 +36,35 @@ proactive-remediations/
 
 Intune uploads these as **Detection script** and **Remediation script** respectively.
 
+Not every package fits this pattern. Multi-step orchestrations — such as the
+SSH-driven `firewall-fw-update` runbook — live under `workflows/` instead of
+`proactive-remediations/`.
+
 ## Testing
 
 - `Invoke-Pester ./tests/` from the repo root (Pester 5+)
 - Manual: run Detect then Remediate, verify exit codes and log output
 - Pre-deploy: validate against one test device in the **CIT** ring before assigning broadly
+
+## QA
+
+The repo standards above (PS 5.1 compatibility, the 0/1/2 exit-code contract, no
+secrets, signing) are now enforced by a layered QA gate. See **[docs/QA-PROCESS.md](docs/QA-PROCESS.md)**
+for the full design and **[docs/QA-ASSESSMENT.md](docs/QA-ASSESSMENT.md)** for the findings.
+
+- **Before you commit**, validate one script with the `/validate-script` skill:
+
+  ```powershell
+  .\tools\Invoke-CITScriptValidation.ps1 -Path .\platform\CIT-Logging.ps1
+  ```
+
+  It runs parse, PSScriptAnalyzer (`PSScriptAnalyzerSettings.psd1`), an encoding/signing
+  lint, the CIT-Logging dot-source load-contract, an exit-code-contract check, and the
+  matching Pester test. See `tools/README.md`.
+
+- **On every PR**, `.github/workflows/qa.yml` re-runs PSScriptAnalyzer and Pester on
+  `windows-latest` (the production runtime) and fails the build on any analyzer error or
+  failing test.
 
 ## Deploying to Intune
 

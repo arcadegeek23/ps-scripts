@@ -1,10 +1,11 @@
+#Requires -Version 5.1
 # FW-StageFirmware.ps1
 # SCP firmware image to firewall without installing.
 # Author:  Kyle Etter
 # Created: 2026-06-13
 # Updated: 2026-06-13
 # Tested:  Windows 10 22H2, Windows 11 23H2
-# Intune:  Proactive Remediation — Remediation
+# Intune:  Proactive Remediation - Remediation
 # Notes:   Uploads image to firewall storage only. Does not trigger install or reboot.
 #          Idempotent: re-upload overwrites same filename on the firewall.
 
@@ -35,6 +36,17 @@ try {
         exit 2
     }
 
+    if (-not (Assert-CitPoshSsh -ScriptName 'FW-StageFirmware')) {
+        [PSCustomObject]@{
+            Action    = 'POSH_SSH_UNAVAILABLE'
+            Message   = 'Posh-SSH module is not available to this process. Install it machine-wide: Install-Module Posh-SSH -Scope AllUsers.'
+            Vendor    = $Vendor
+            Firewall  = $FirewallAddress
+            Timestamp = (Get-Date).ToString('o')
+        } | ConvertTo-Json -Compress | Write-Output
+        exit 2
+    }
+
     $credential = Get-CitFirewallCredential -KeyPath $KeyPath
     if ($credential.Source -eq 'NO_CREDENTIAL_SOURCE') {
         [PSCustomObject]@{
@@ -52,10 +64,13 @@ try {
     $sessionParams = @{
         ComputerName = $FirewallAddress
         Port         = 22
+        AcceptKey    = $true
         ErrorAction  = 'Stop'
     }
     if ($credential.Source -eq 'SSH_KEY') {
         $sessionParams['KeyFile'] = $credential.KeyPath
+        $securePassword = New-Object System.Security.SecureString
+        $sessionParams['Credential'] = New-Object System.Management.Automation.PSCredential($credential.Username, $securePassword)
     } else {
         $sessionParams['Credential'] = $credential.Credential
     }
@@ -64,8 +79,8 @@ try {
 
     $stageResult = $null
     switch ($Vendor) {
-        'SonicWall' { $stageResult = Stage-CitSonicWallFirmware -SshSession $session -ImagePath $ImagePath }
-        'Fortinet'  { $stageResult = Stage-CitFortinetFirmware -SshSession $session -ImagePath $ImagePath }
+        'SonicWall' { $stageResult = Save-CitSonicWallFirmware -SshSession $session -ImagePath $ImagePath }
+        'Fortinet'  { $stageResult = Save-CitFortinetFirmware -SshSession $session -ImagePath $ImagePath }
     }
 
     Remove-SSHSession -SSHSession $session | Out-Null

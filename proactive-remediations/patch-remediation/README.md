@@ -43,8 +43,8 @@ Run these in order on a pilot device. Each script emits JSON or key-value pairs 
    .\CIT-PIA-WUFix-Reboot.ps1
    ```
 
-   - No logged-in user: initiates `Restart-Computer -Force`.
-   - Logged-in user: outputs `Action = SCHEDULE_VIA_DATTO` and does **not** reboot.
+   - No interactive user (detected reliably via the explorer.exe owner): emits `Action = IMMEDIATE_REBOOT`, flushes stdout, then schedules `shutdown /r /t 15`.
+   - Logged-in user **or uncertain detection**: outputs `Action = SCHEDULE_VIA_DATTO` and does **not** reboot (fail-closed).
 
    To force a reboot during testing, use:
 
@@ -66,7 +66,7 @@ Run these in order on a pilot device. Each script emits JSON or key-value pairs 
    .\CIT-PIA-WUFix-Generic.ps1
    ```
 
-   Expected output: JSON with `Status = COMPLETE`. Clears `SoftwareDistribution\Download` and triggers scan/download/install via `UsoClient.exe`.
+   Expected output: JSON with `Status = COMPLETE` only when the cache clear and the update cycle actually succeed; otherwise `Status = FAILED` and a non-zero exit. Clears `SoftwareDistribution\Download` and drives scan/download/install through the Windows Update COM API (works under SYSTEM / session 0); `UsoClient.exe` is only a best-effort fallback.
 
 6. **Verify**
 
