@@ -88,7 +88,7 @@ function Get-CitSecureBootRegValue {
             return $null
         }
         $item = Get-ItemProperty -Path $KeyPath -Name $Name -ErrorAction SilentlyContinue
-        if ($item -and $item.$Name -ne $null) {
+        if ($item -and $null -ne $item.$Name) {
             return $item.$Name
         }
         return $null

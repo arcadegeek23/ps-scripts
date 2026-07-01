@@ -4,7 +4,6 @@
 
 BeforeAll {
     $scriptPath = Join-Path $PSScriptRoot 'Detect-HPBIOS.ps1'
-    $scriptName = 'Detect-HPBIOS'
 }
 
 function Test-PlatformIsWindows {

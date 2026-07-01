@@ -4,7 +4,6 @@
 
 BeforeAll {
     $scriptPath = Join-Path $PSScriptRoot 'Remediate-HPBIOS.ps1'
-    $scriptName = 'Remediate-HPBIOS'
 }
 
 function Test-PlatformIsWindows {
