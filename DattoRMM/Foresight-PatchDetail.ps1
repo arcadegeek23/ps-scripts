@@ -13,7 +13,7 @@
 
   The encoded value is written to HKLM:\SOFTWARE\CentraStage\Custom<N>, which the
   Datto agent maps to udf<N> on its next check-in. Set $UdfSlot to match the slot
-  configured in Foresight (Settings -> Datto RMM patch-detail UDF, default 25).
+  configured in Foresight (Settings -> Datto RMM patch-detail UDF, slot 20).
 
   Deploy as a Component that runs on a schedule (recommended: daily or aligned
   with the patch window). No parameters are required; tune the variables below.
@@ -22,15 +22,17 @@
   - Read-only with respect to Windows Update: it searches, it does not install.
   - Targets Windows endpoints. On non-Windows / WUA-unavailable hosts it exits
     cleanly without writing a UDF.
-  - The named list is capped to fit the ~255-char UDF limit; the mc/cc/fc totals
-    always carry the exact counts so Foresight scoring stays accurate.
+  - The named list is dynamically capped to the 255-char UDF limit. The mc/cc/fc
+    totals stay exact for scoring; dc/oc/dfc preserve excluded-class counts for
+    overall device-health reporting.
 #>
 
 # --- Configuration ----------------------------------------------------------
 # UDF slot to write (must match Foresight's configured patch-detail UDF).
-$UdfSlot = 25
+$UdfSlot = 20
 # Max named entries to encode (oldest-first). Keeps the value under ~255 chars.
 $MaxNamedEntries = 12
+$MaxUdfLength = 255
 
 $ErrorActionPreference = "Stop"
 $FormatVersion = "PD1"
@@ -50,23 +52,32 @@ function Get-RebootPending {
   return $false
 }
 
-function Test-ExcludedUpdate {
+function Get-UpdateClass {
   param($Update)
-  # Exclude non-security noise that drags posture scores down without
-  # representing real security exposure: Defender antivirus "Definition
-  # Updates" reissue daily (so a device is essentially never compliant),
-  # driver updates, and optional/preview picks the OS won't auto-select.
-  # These should not count toward the missing/critical patch totals.
+
+  # UpdateType 2 is a driver. Keep the category fallback for WUA variants that
+  # expose the enum as a string or omit Type through COM interop.
+  try {
+    $typeValue = $Update.Type
+    if ([string]$typeValue -match "(?i)driver" -or [int]$typeValue -eq 2) {
+      return "Driver"
+    }
+  } catch { }
+
+  $isDefinition = $false
   try {
     foreach ($cat in $Update.Categories) {
       $name = ""
       try { $name = [string]$cat.Name } catch { }
-      if ($name -match "(?i)definition" -or $name -match "(?i)driver") { return $true }
+      if ($name -match "(?i)driver") { return "Driver" }
+      if ($name -match "(?i)definition") { $isDefinition = $true }
     }
   } catch { }
-  # BrowseOnly = optional / hand-pick updates Windows won't auto-select.
-  try { if ($Update.BrowseOnly) { return $true } } catch { }
-  return $false
+  if ($isDefinition) { return "Definition" }
+
+  # BrowseOnly updates are optional and not intended for automatic processing.
+  try { if ($Update.BrowseOnly) { return "Optional" } } catch { }
+  return "Scored"
 }
 
 function Get-Severity {
@@ -107,9 +118,72 @@ function Get-KbToken {
 
 function Set-DattoUdf {
   param([int]$Slot, [string]$Value)
+
+  if (-not $Value.StartsWith("PD1|", [System.StringComparison]::Ordinal)) {
+    throw "Refusing to write a non-PD1 patch-detail value to Datto UDF $Slot."
+  }
+
   $key = "HKLM:\SOFTWARE\CentraStage"
+  $propertyName = "Custom$Slot"
   if (-not (Test-Path $key)) { New-Item -Path $key -Force | Out-Null }
-  New-ItemProperty -Path $key -Name "Custom$Slot" -PropertyType String -Value $Value -Force | Out-Null
+  $writeResult = New-ItemProperty -Path $key -Name $propertyName -PropertyType String -Value $Value -Force
+  $writtenProperty = $writeResult.PSObject.Properties[$propertyName]
+  if (-not $writtenProperty -or [string]$writtenProperty.Value -cne $Value) {
+    throw "Registry write verification failed for $key\$propertyName."
+  }
+
+  try {
+    $readBack = [string](Get-ItemPropertyValue -Path $key -Name $propertyName -ErrorAction Stop)
+    if ($readBack -cne $Value) {
+      throw "Registry read-back verification failed for $key\$propertyName."
+    }
+    return "verified"
+  } catch [System.Management.Automation.ItemNotFoundException] {
+    return "consumed by the Datto agent"
+  } catch [System.Management.Automation.PSArgumentException] {
+    return "consumed by the Datto agent"
+  }
+}
+
+function New-PatchDetailPayload {
+  param(
+    [string]$Version,
+    [string]$ScanDate,
+    [int]$RebootFlag,
+    [int]$MissingTotal,
+    [int]$CriticalTotal,
+    [int]$FailedTotal,
+    [int]$DriverTotal,
+    [int]$OptionalTotal,
+    [int]$DefinitionTotal,
+    [string[]]$MissingEntries,
+    [string[]]$FailedEntries,
+    [int]$MaxEntries,
+    [int]$MaxLength
+  )
+
+  $selectedMissing = @($MissingEntries | Select-Object -First $MaxEntries)
+  $selectedFailed = @($FailedEntries | Select-Object -First $MaxEntries)
+  $truncated = if (
+    @($MissingEntries).Count -gt $selectedMissing.Count -or
+    @($FailedEntries).Count -gt $selectedFailed.Count
+  ) { 1 } else { 0 }
+
+  while ($true) {
+    $missingPayload = $selectedMissing -join ";"
+    $failedPayload = $selectedFailed -join ";"
+    $payload = "$Version|s=$ScanDate|rb=$RebootFlag|rs=-|mc=$MissingTotal|cc=$CriticalTotal|fc=$FailedTotal|dc=$DriverTotal|oc=$OptionalTotal|dfc=$DefinitionTotal|t=$truncated|m=$missingPayload|f=$failedPayload"
+    if ($payload.Length -le $MaxLength) { return $payload }
+
+    $truncated = 1
+    if ($selectedMissing.Count -ge $selectedFailed.Count -and $selectedMissing.Count -gt 0) {
+      $selectedMissing = @($selectedMissing | Select-Object -First ($selectedMissing.Count - 1))
+    } elseif ($selectedFailed.Count -gt 0) {
+      $selectedFailed = @($selectedFailed | Select-Object -First ($selectedFailed.Count - 1))
+    } else {
+      throw "Patch-detail totals exceed the $MaxLength-character Datto UDF limit."
+    }
+  }
 }
 
 # --- Collect ----------------------------------------------------------------
@@ -145,9 +219,23 @@ $scanDate = Get-Date -Format "yyyy-MM-dd"
 
 # Build named entries (oldest release date first so the cap keeps the oldest).
 $missingEntries = @()
+$driverTotal = 0
+$optionalTotal = 0
+$definitionTotal = 0
 foreach ($u in $missing) {
-  # Skip definition/driver/optional updates so posture reflects real patches.
-  if (Test-ExcludedUpdate $u) { continue }
+  $updateClass = Get-UpdateClass $u
+  if ($updateClass -eq "Driver") {
+    $driverTotal++
+    continue
+  }
+  if ($updateClass -eq "Optional") {
+    $optionalTotal++
+    continue
+  }
+  if ($updateClass -eq "Definition") {
+    $definitionTotal++
+    continue
+  }
   $missingEntries += [PSCustomObject]@{
     Kb       = (Get-KbToken $u)
     Sev      = (Get-Severity $u)
@@ -178,18 +266,31 @@ $missingTotal = @($missingEntries).Count
 $criticalTotal = @($missingEntries | Where-Object { $_.Sev -eq "C" }).Count
 $failedTotal = @($failedEntries).Count
 
-$named = @($missingEntries | Select-Object -First $MaxNamedEntries)
-$truncated = if ($missingTotal -gt $named.Count) { 1 } else { 0 }
-$missingPayload = (@($named | ForEach-Object { "$($_.Kb)~$($_.Sev)~$($_.Released)" })) -join ";"
-$failedPayload = (@($failedEntries | Select-Object -First $MaxNamedEntries)) -join ";"
+$missingTokens = @($missingEntries | ForEach-Object { "$($_.Kb)~$($_.Sev)~$($_.Released)" })
+$failedTokens = @($failedEntries)
 
 $rb = if ($rebootPending) { 1 } else { 0 }
 
-$encoded = "$FormatVersion|s=$scanDate|rb=$rb|rs=-|mc=$missingTotal|cc=$criticalTotal|fc=$failedTotal|t=$truncated|m=$missingPayload|f=$failedPayload"
+$encoded = New-PatchDetailPayload `
+  -Version $FormatVersion `
+  -ScanDate $scanDate `
+  -RebootFlag $rb `
+  -MissingTotal $missingTotal `
+  -CriticalTotal $criticalTotal `
+  -FailedTotal $failedTotal `
+  -DriverTotal $driverTotal `
+  -OptionalTotal $optionalTotal `
+  -DefinitionTotal $definitionTotal `
+  -MissingEntries $missingTokens `
+  -FailedEntries $failedTokens `
+  -MaxEntries $MaxNamedEntries `
+  -MaxLength $MaxUdfLength
 
-Set-DattoUdf -Slot $UdfSlot -Value $encoded
+$writeStatus = Set-DattoUdf -Slot $UdfSlot -Value $encoded
 
-Write-Output "Patch detail written to UDF $UdfSlot."
+Write-Output "Patch detail written to UDF $UdfSlot ($writeStatus)."
+Write-Output "  Encoded value: $encoded"
 Write-Output "  Missing: $missingTotal (critical $criticalTotal), Failed: $failedTotal, Reboot pending: $rebootPending"
+Write-Output "  Excluded from score: drivers $driverTotal, optional $optionalTotal, definitions $definitionTotal"
 Write-Output "  Encoded length: $($encoded.Length) chars"
 exit 0
