@@ -8,7 +8,14 @@ BeforeAll {
     [ref]$tokens,
     [ref]$parseErrors
   )
-  foreach ($functionName in @("Set-DattoUdf", "Get-UpdateClass", "New-PatchDetailPayload")) {
+  foreach ($functionName in @(
+    "Set-DattoUdf",
+    "Get-UpdateClass",
+    "Get-KbToken",
+    "Get-FailedUpdateIds",
+    "Get-FailedEntryToken",
+    "New-PatchDetailPayload"
+  )) {
     $functionAst = $scriptAst.Find({
       param($node)
       $node -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
@@ -58,7 +65,10 @@ Describe "Foresight patch-detail Datto UDF contract" {
 
     Get-UpdateClass ([pscustomobject]@{
       Type = 1
-      Categories = @([pscustomobject]@{ Name = "Definition Updates" })
+      Categories = @([pscustomobject]@{
+        Name = "Actualizaciones de definiciones"
+        CategoryID = "E0789628-CE08-4437-BE74-2495B842F43B"
+      })
       BrowseOnly = $false
     }) | Should -Be "Definition"
 
@@ -67,6 +77,76 @@ Describe "Foresight patch-detail Datto UDF contract" {
       Categories = @([pscustomobject]@{ Name = "Security Updates" })
       BrowseOnly = $false
     }) | Should -Be "Scored"
+  }
+
+  It "counts failed history only for currently pending scored updates" {
+    $history = @(
+      [pscustomobject]@{ ResultCode = 4; Operation = 1; UpdateIdentity = [pscustomobject]@{ UpdateID = "driver" } },
+      [pscustomobject]@{ ResultCode = 4; Operation = 1; UpdateIdentity = [pscustomobject]@{ UpdateID = "optional" } },
+      [pscustomobject]@{ ResultCode = 4; Operation = 1; UpdateIdentity = [pscustomobject]@{ UpdateID = "definition" } },
+      [pscustomobject]@{ ResultCode = 4; Operation = 1; UpdateIdentity = [pscustomobject]@{ UpdateID = "scored" } },
+      [pscustomobject]@{ ResultCode = 4; Operation = 1; UpdateIdentity = [pscustomobject]@{ UpdateID = "scored" } },
+      [pscustomobject]@{ ResultCode = 4; Operation = 1; UpdateIdentity = [pscustomobject]@{ UpdateID = "not-pending" } },
+      [pscustomobject]@{ ResultCode = 2; Operation = 1; UpdateIdentity = [pscustomobject]@{ UpdateID = "successful" } }
+    )
+    $failedUpdateIds = Get-FailedUpdateIds $history
+
+    $pending = @(
+      [pscustomobject]@{
+        Type = 2
+        Categories = @()
+        BrowseOnly = $false
+        Identity = [pscustomobject]@{ UpdateID = "driver" }
+        KBArticleIDs = @()
+        Title = "Driver Update"
+      },
+      [pscustomobject]@{
+        Type = 1
+        Categories = @()
+        BrowseOnly = $true
+        Identity = [pscustomobject]@{ UpdateID = "optional" }
+        KBArticleIDs = @()
+        Title = "Optional Update"
+      },
+      [pscustomobject]@{
+        Type = 1
+        Categories = @([pscustomobject]@{
+          Name = "Actualizaciones de definiciones"
+          CategoryID = "E0789628-CE08-4437-BE74-2495B842F43B"
+        })
+        BrowseOnly = $false
+        Identity = [pscustomobject]@{ UpdateID = "definition" }
+        KBArticleIDs = @()
+        Title = "Definition Update"
+      },
+      [pscustomobject]@{
+        Type = 1
+        Categories = @([pscustomobject]@{ Name = "Security Updates" })
+        BrowseOnly = $false
+        Identity = [pscustomobject]@{ UpdateID = "scored" }
+        KBArticleIDs = @()
+        Title = "Security Update KB5000001"
+      },
+      [pscustomobject]@{
+        Type = 1
+        Categories = @([pscustomobject]@{ Name = "Security Updates" })
+        BrowseOnly = $false
+        Identity = [pscustomobject]@{ UpdateID = "clean" }
+        KBArticleIDs = @()
+        Title = "Security Update KB5000002"
+      }
+    )
+
+    $failedEntries = @()
+    foreach ($update in $pending) {
+      $updateClass = Get-UpdateClass $update
+      $failedEntry = Get-FailedEntryToken $update $updateClass $failedUpdateIds
+      if ($failedEntry) { $failedEntries += $failedEntry }
+    }
+
+    $failedUpdateIds.Count | Should -Be 5
+    $failedEntries.Count | Should -Be 1
+    $failedEntries[0] | Should -Match '^SecurityUpdateKB5000~I~-$'
   }
 
   It "keeps exact totals and trims names to the Datto UDF limit" {

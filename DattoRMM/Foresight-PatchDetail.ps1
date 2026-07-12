@@ -70,7 +70,12 @@ function Get-UpdateClass {
       $name = ""
       try { $name = [string]$cat.Name } catch { }
       if ($name -match "(?i)driver") { return "Driver" }
-      if ($name -match "(?i)definition") { $isDefinition = $true }
+      $categoryId = ""
+      try { $categoryId = [string]$cat.CategoryID } catch { }
+      if (
+        $categoryId -eq "E0789628-CE08-4437-BE74-2495B842F43B" -or
+        $name -match "(?i)definition"
+      ) { $isDefinition = $true }
     }
   } catch { }
   if ($isDefinition) { return "Definition" }
@@ -114,6 +119,32 @@ function Get-KbToken {
   if ($token.Length -gt 20) { $token = $token.Substring(0, 20) }
   if (-not $token) { $token = "Update" }
   return $token
+}
+
+function Get-FailedUpdateIds {
+  param($History)
+
+  $failedUpdateIds = @{}
+  foreach ($entry in @($History)) {
+    if ($entry.ResultCode -ne 4 -or $entry.Operation -ne 1) { continue }
+    try {
+      $updateId = [string]$entry.UpdateIdentity.UpdateID
+      if ($updateId) { $failedUpdateIds[$updateId] = $true }
+    } catch { }
+  }
+  return $failedUpdateIds
+}
+
+function Get-FailedEntryToken {
+  param($Update, [string]$UpdateClass, [hashtable]$FailedUpdateIds)
+
+  if ($UpdateClass -ne "Scored") { return $null }
+  $updateId = ""
+  try { $updateId = [string]$Update.Identity.UpdateID } catch { }
+  if (-not $updateId -or -not $FailedUpdateIds.ContainsKey($updateId)) {
+    return $null
+  }
+  return "$(Get-KbToken $Update)~I~-"
 }
 
 function Set-DattoUdf {
@@ -199,20 +230,17 @@ $searcher = $session.CreateUpdateSearcher()
 $missingResult = $searcher.Search("IsInstalled=0 and IsHidden=0")
 $missing = @($missingResult.Updates)
 
-# Recently failed installs from the local Windows Update history.
-$failed = @()
+# Recently failed installs from the local Windows Update history. History rows
+# lack Type/BrowseOnly, so retain their IDs and classify the matching pending
+# IUpdate objects below.
+$history = @()
 try {
   $historyCount = $searcher.GetTotalHistoryCount()
   if ($historyCount -gt 0) {
-    $history = $searcher.QueryHistory(0, [Math]::Min($historyCount, 100))
-    foreach ($entry in $history) {
-      # ResultCode: 4 = Failed. Operation 1 = Installation.
-      if ($entry.ResultCode -eq 4 -and $entry.Operation -eq 1) {
-        $failed += $entry
-      }
-    }
+    $history = @($searcher.QueryHistory(0, [Math]::Min($historyCount, 100)))
   }
 } catch { }
+$failedUpdateIds = Get-FailedUpdateIds $history
 
 $rebootPending = Get-RebootPending
 $scanDate = Get-Date -Format "yyyy-MM-dd"
@@ -222,8 +250,10 @@ $missingEntries = @()
 $driverTotal = 0
 $optionalTotal = 0
 $definitionTotal = 0
+$failedEntries = @()
 foreach ($u in $missing) {
   $updateClass = Get-UpdateClass $u
+  $failedEntry = Get-FailedEntryToken $u $updateClass $failedUpdateIds
   if ($updateClass -eq "Driver") {
     $driverTotal++
     continue
@@ -241,26 +271,11 @@ foreach ($u in $missing) {
     Sev      = (Get-Severity $u)
     Released = (Get-ReleaseDate $u)
   }
+  if ($failedEntry) { $failedEntries += $failedEntry }
 }
 $missingEntries = @($missingEntries | Sort-Object -Property @{
   Expression = { if ($_.Released -eq "-") { Get-Date } else { Get-Date $_.Released } }
 })
-
-$failedEntries = @()
-foreach ($f in $failed) {
-  $kb = "Update"
-  $title = ""
-  try { $title = [string]$f.Title } catch { }
-  $m = [regex]::Match($title, "KB(\d+)")
-  if ($m.Success) {
-    $kb = $m.Groups[1].Value
-  } else {
-    $token = ($title -replace "[^A-Za-z0-9]", "")
-    if ($token.Length -gt 20) { $token = $token.Substring(0, 20) }
-    if ($token) { $kb = $token }
-  }
-  $failedEntries += "$kb~I~-"
-}
 
 $missingTotal = @($missingEntries).Count
 $criticalTotal = @($missingEntries | Where-Object { $_.Sev -eq "C" }).Count
